@@ -5,25 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Auto Dazzle ERP</title>
     
-    <!-- Frameworks -->
+    <!-- Core Engine -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <script>
-      // 1. System Environment
+      // 1. System Context
       window.process = { env: { API_KEY: "" } };
 
-      // 2. The Dazzle Module Linker
-      // Resolves relative paths within Blob-based ESM modules
+      // 2. The Recursive Kernel Linker
       const moduleRegistry = new Map();
 
       function resolvePath(base, relative) {
-        if (!relative.startsWith('.')) return relative; // External import
+        if (!relative.startsWith('.')) return relative;
         const stack = base.split("/");
         const parts = relative.split("/");
-        stack.pop(); // Remove current filename
+        stack.pop(); // Remove filename
         for (const part of parts) {
           if (part === ".") continue;
           if (part === "..") stack.pop();
@@ -33,41 +32,42 @@
       }
 
       async function dazzleImport(url) {
-        // Normalizing URL for registry
         const normalizedUrl = url.startsWith('./') ? url : './' + url.replace(/^\.\//, '');
         if (moduleRegistry.has(normalizedUrl)) return moduleRegistry.get(normalizedUrl);
 
         const promise = (async () => {
-          console.debug(`[Dazzle Linker] Fetching: ${normalizedUrl}`);
+          console.debug(`[System] Linking: ${normalizedUrl}`);
           const response = await fetch(normalizedUrl);
-          if (!response.ok) throw new Error(`MIA: ${normalizedUrl}`);
+          if (!response.ok) throw new Error(`Missing Component: ${normalizedUrl}`);
           let code = await response.text();
 
-          // 1. Find local dependencies (relative imports of .tsx, .ts, .js)
-          const importRegex = /import\s+[\s\S]*?from\s+['"](\.\/.*?)['"]|import\s+['"](\.\/.*?)['"]|export\s+[\s\S]*?from\s+['"](\.\/.*?)['"]/g;
+          // Regex to catch both ./ and ../ imports/exports
+          const importRegex = /(import|export)\s+([\s\S]*?from\s+)?['"](\.{1,2}\/.*?)['"]/g;
           const matches = [...code.matchAll(importRegex)];
           
           for (const match of matches) {
-            const relativePath = match[1] || match[2] || match[3];
-            // Ensure .tsx extension if missing
-            const fullPath = relativePath.endsWith('.tsx') || relativePath.endsWith('.ts') ? relativePath : relativePath + '.tsx';
-            const absolutePath = resolvePath(normalizedUrl, fullPath);
+            const relativePath = match[3];
+            // Normalize extension
+            let fullPath = relativePath;
+            if (!/\.(tsx|ts|js)$/.test(relativePath)) {
+              fullPath += '.tsx';
+            }
             
-            // Recursively load dependency
+            const absolutePath = resolvePath(normalizedUrl, fullPath);
             const blobUrl = await dazzleImport(absolutePath);
             
-            // Rewrite the code to use the Blob URL instead of the relative path
-            code = code.replace(relativePath, blobUrl);
+            // Surgical replacement of the path with the Blob URL
+            const fullMatch = match[0];
+            const replacedMatch = fullMatch.replace(relativePath, blobUrl);
+            code = code.split(fullMatch).join(replacedMatch);
           }
 
-          // 2. Transpile with Babel
+          // Transpile via Babel
           const transformed = Babel.transform(code, {
             presets: ['react', 'typescript'],
-            filename: normalizedUrl,
-            sourceMaps: 'inline'
+            filename: normalizedUrl
           }).code;
 
-          // 3. Encapsulate in a Javascript Blob
           const blob = new Blob([transformed], { type: 'application/javascript' });
           return URL.createObjectURL(blob);
         })();
@@ -80,15 +80,12 @@
         const root = document.getElementById('root');
         if (root) {
           root.innerHTML = `
-            <div style="padding: 40px; color: #fff; background: #0f172a; min-height: 100vh; font-family: 'Inter', sans-serif; display: flex; align-items: center; justify-content: center;">
-              <div style="max-width: 550px; width: 100%; background: #ef4444; padding: 30px; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
-                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
-                  <div style="background: white; color: #ef4444; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900;">!</div>
-                  <h2 style="margin: 0; font-weight: 900; text-transform: uppercase; letter-spacing: 1px;">Kernel Panic</h2>
-                </div>
-                <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-bottom: 20px; overflow-x: auto; white-space: pre-wrap;">${message}</div>
-                <p style="font-size: 11px; font-weight: bold; opacity: 0.7; text-transform: uppercase;">Location: ${source?.split('/').pop() || 'Internal'}:${lineno}</p>
-                <button onclick="location.reload()" style="margin-top: 25px; width: 100%; padding: 14px; border: none; border-radius: 8px; background: white; color: #ef4444; font-weight: 900; text-transform: uppercase; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">Forced System Restart</button>
+            <div style="padding: 40px; color: #fff; background: #020617; min-height: 100vh; font-family: 'Inter', sans-serif; display: flex; align-items: center; justify-content: center;">
+              <div style="max-width: 550px; width: 100%; background: #991b1b; padding: 30px; border-radius: 12px; border: 1px solid #ef4444; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8);">
+                <h2 style="margin: 0 0 15px 0; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #fecaca;">System Kernel Error</h2>
+                <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 6px; font-family: monospace; font-size: 12px; line-height: 1.6; border: 1px solid rgba(255,255,255,0.1); overflow-x: auto;">${message}</div>
+                <p style="font-size: 10px; margin-top: 15px; opacity: 0.6; font-weight: bold; text-transform: uppercase;">Module: ${source?.split('/').pop() || 'Core'} | Line: ${lineno}</p>
+                <button onclick="location.reload()" style="margin-top: 25px; width: 100%; padding: 12px; border: none; border-radius: 6px; background: white; color: #991b1b; font-weight: 900; text-transform: uppercase; cursor: pointer; letter-spacing: 1px;">Reboot System</button>
               </div>
             </div>
           `;
@@ -97,13 +94,11 @@
     </script>
 
     <style>
-      body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; margin: 0; overflow: hidden; }
+      body { font-family: 'Inter', sans-serif; background-color: #0f172a; margin: 0; overflow: hidden; }
+      @keyframes pulse-red { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(0.95); } }
+      .loading-pulse { animation: pulse-red 2s infinite; }
       .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-      @media print { .print-hidden { display: none !important; } }
-      @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-      .animate-pulse-red { animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
     </style>
 
     <script type="importmap">
@@ -122,23 +117,21 @@
   </head>
   <body>
     <div id="root">
-      <div class="flex items-center justify-center min-h-screen bg-slate-900">
+      <div class="flex items-center justify-center min-h-screen bg-slate-950">
         <div class="text-center">
-          <div class="inline-block rounded-full h-16 w-16 border-t-4 border-r-4 border-red-600 border-solid animate-spin mb-8"></div>
-          <h1 class="text-white font-black text-xl tracking-[0.3em] uppercase mb-2">Auto Dazzle</h1>
-          <p class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.5em] mb-8">Enterprise ERP Core</p>
-          <div class="bg-slate-800/50 px-6 py-3 rounded-full inline-flex items-center gap-3">
-            <div class="w-2 h-2 bg-red-600 rounded-full animate-pulse-red"></div>
-            <p id="status-text" class="text-slate-400 text-[10px] uppercase font-bold tracking-widest">Resolving module graph...</p>
+          <div class="loading-pulse mb-8">
+            <div class="h-20 w-20 border-t-4 border-red-600 rounded-full animate-spin mx-auto"></div>
+          </div>
+          <h1 class="text-white font-black text-2xl tracking-[0.4em] uppercase mb-2">Auto Dazzle</h1>
+          <p class="text-slate-500 font-bold text-[10px] uppercase tracking-[0.6em] mb-10">Modular ERP Core v2.0</p>
+          <div class="inline-flex items-center gap-3 px-6 py-2 bg-slate-900 rounded-full border border-slate-800">
+             <div class="w-2 h-2 bg-red-600 rounded-full animate-pulse"></div>
+             <p id="status-text" class="text-slate-400 text-[9px] uppercase font-black tracking-widest">Booting Modules...</p>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 
-      The Bootstrapper Script
-      Marked as data-type="module" so Babel knows how to handle top-level imports
-    -->
     <script 
       type="text/babel" 
       data-presets="react,typescript" 
@@ -147,15 +140,15 @@
       import React from 'react';
       import ReactDOM from 'react-dom/client';
 
-      async function bootSystem() {
+      async function initKernel() {
         const status = document.getElementById('status-text');
         try {
-          if (status) status.innerText = "Linking components...";
+          if (status) status.innerText = "Assembling Dependency Graph...";
           
-          // Use our high-level Linker to solve the relative path problem
+          // Link the main App entry point
           const appBlobUrl = await dazzleImport('./App.tsx');
           
-          if (status) status.innerText = "Starting kernel...";
+          if (status) status.innerText = "Starting Virtual Environment...";
           const AppModule = await import(appBlobUrl);
           const App = AppModule.default;
 
@@ -169,13 +162,13 @@
             );
           }
         } catch (err) {
-          console.error("Kernel Panic during boot:", err);
-          window.onerror(err.message, "DazzleBoot", 0, 0, err);
+          console.error("Kernel Panic:", err);
+          window.onerror(err.message, "SystemKernel", 0, 0, err);
         }
       }
 
-      // Small grace period for Babel to ready itself
-      setTimeout(bootSystem, 300);
+      // Small delay for Babel script to mount
+      setTimeout(initKernel, 100);
     </script>
   </body>
 </html>
