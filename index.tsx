@@ -1,10 +1,11 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-// Use the relative path. Babel Standalone will resolve this.
 import App from './App.tsx';
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
+  // Add a marker for the loading screen failsafe
+  rootElement.setAttribute('data-role', 'erp-root');
   const root = ReactDOM.createRoot(rootElement);
   root.render(
     <React.StrictMode>
