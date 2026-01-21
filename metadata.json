@@ -1,0 +1,5 @@
+{
+  "name": "Auto Dazzle ERP",
+  "description": "A modular, SAP-style ERP system for Auto Dazzle Detailing Spa, featuring Financials, Operations, CRM, and Inventory management with Gemini AI-assisted data migration.",
+  "requestFramePermissions": []
+}
