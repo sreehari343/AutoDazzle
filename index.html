@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Auto Dazzle Detailing Spa</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Babel standalone to transpile TSX in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
       body {
@@ -16,14 +18,8 @@
       .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 
-      /* GLOBAL PRINT RESET */
       @media print {
-        @page { 
-          margin: 0; 
-          size: auto; 
-        }
-        
-        /* Kill all scrollable containers */
+        @page { margin: 0; size: auto; }
         html, body, #root, main, .overflow-auto, .overflow-hidden, .h-screen {
           height: auto !important;
           overflow: visible !important;
@@ -34,19 +30,8 @@
           margin: 0 !important;
           padding: 0 !important;
         }
-
-        /* Force graphics */
-        * {
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-        }
-
-        /* INVOICE MODE: When this class is on body, hide the entire ERP app */
-        body.printing-invoice #root {
-          display: none !important;
-        }
-        
-        /* Show the isolated invoice portal */
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        body.printing-invoice #root { display: none !important; }
         body.printing-invoice .invoice-container-print {
           display: block !important;
           width: 100% !important;
@@ -55,11 +40,7 @@
           background: white !important;
         }
       }
-      
-      /* Hide the print-only invoice container on screen */
-      .invoice-container-print {
-        display: none;
-      }
+      .invoice-container-print { display: none; }
     </style>
     <script type="importmap">
 {
@@ -75,11 +56,18 @@
   }
 }
 </script>
-  <link rel="stylesheet" href="/index.css">
-</head>
+  </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="./index.tsx"></script>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <!-- 
+      This script tag handles the entry point. 
+      The browser will now read your index.tsx file directly.
+    -->
+    <script 
+      type="text/babel" 
+      data-presets="react,typescript" 
+      data-type="module" 
+      src="index.tsx"
+    ></script>
+  </body>
 </html>
