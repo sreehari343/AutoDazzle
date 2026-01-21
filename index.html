@@ -46,8 +46,8 @@
           root.innerHTML = `
             <div style="padding: 30px; color: #fff; background: #0f172a; min-height: 100vh; font-family: sans-serif; display: flex; align-items: center; justify-content: center;">
               <div style="max-width: 500px; width: 100%; background: #ef4444; padding: 25px; border-radius: 12px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
-                <h2 style="margin: 0 0 10px 0; font-weight: 900; text-transform: uppercase;">Startup Error</h2>
-                <p style="font-size: 14px; line-height: 1.5; background: rgba(0,0,0,0.1); padding: 10px; border-radius: 6px;">${message}</p>
+                <h2 style="margin: 0 0 10px 0; font-weight: 900; text-transform: uppercase;">System Startup Error</h2>
+                <div style="font-size: 14px; line-height: 1.5; background: rgba(0,0,0,0.1); padding: 12px; border-radius: 6px; font-family: monospace;">${message}</div>
                 <p style="font-size: 11px; margin-top: 15px; opacity: 0.8; font-weight: bold;">FILE: ${source?.split('/').pop() || 'Unknown'}</p>
                 <button onclick="location.reload()" style="margin-top: 20px; width: 100%; padding: 12px; border: none; border-radius: 6px; background: white; color: #ef4444; font-weight: 900; text-transform: uppercase; cursor: pointer;">Retry System Load</button>
               </div>
@@ -85,22 +85,30 @@
         <div class="text-center">
           <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-red-600 border-t-transparent mb-6"></div>
           <p class="text-white font-black uppercase tracking-[0.2em] text-xs">Initializing Auto Dazzle ERP</p>
-          <p id="status-text" class="text-slate-500 text-[10px] mt-4 uppercase font-bold tracking-widest">Bypassing MIME restrictions...</p>
+          <p id="status-text" class="text-slate-500 text-[10px] mt-4 uppercase font-bold tracking-widest">Applying security protocols...</p>
         </div>
       </div>
     </div>
 
-    <!-- Bootstrap logic inlined to avoid MIME errors for the entry script -->
-    <script type="text/babel" data-presets="react,typescript">
+    <!-- 
+      CRITICAL: Added data-type="module"
+      This tells Babel Standalone to output a script with type="module",
+      which is required to use 'import' statements.
+    -->
+    <script 
+      type="text/babel" 
+      data-presets="react,typescript" 
+      data-type="module"
+    >
       import React from 'react';
       import ReactDOM from 'react-dom/client';
 
       async function startApp() {
         const status = document.getElementById('status-text');
         try {
-          if (status) status.innerText = "Loading system core...";
+          if (status) status.innerText = "Synchronizing core modules...";
           
-          // Use our custom loader for App.tsx
+          // Use our custom loader for App.tsx to bypass MIME type issues
           const AppModule = await loadTSX('./App.tsx');
           const App = AppModule.default;
 
@@ -115,12 +123,12 @@
           }
         } catch (err) {
           console.error("Critical Boot Error:", err);
-          window.onerror(err.message, "Bootstrapper", 0, 0, err);
+          window.onerror(err.message, "App Bootstrapper", 0, 0, err);
         }
       }
 
-      // Small delay to ensure Babel is ready
-      setTimeout(startApp, 100);
+      // Small delay to ensure Babel and DOM are fully ready
+      setTimeout(startApp, 200);
     </script>
   </body>
 </html>
