@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Auto Dazzle Detailing Spa</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Babel standalone to allow browser to read .tsx files directly -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
       body {
@@ -41,12 +43,11 @@
           print-color-adjust: exact !important;
         }
 
-        /* INVOICE MODE: When this class is on body, hide the entire ERP app */
+        /* INVOICE MODE */
         body.printing-invoice #root {
           display: none !important;
         }
         
-        /* Show the isolated invoice portal */
         body.printing-invoice .invoice-container-print {
           display: block !important;
           width: 100% !important;
@@ -56,13 +57,10 @@
         }
       }
       
-      /* Hide the print-only invoice container on screen */
       .invoice-container-print {
         display: none;
       }
     </style>
-
-  <link rel="stylesheet" href="/index.css">
     <script type="importmap">
 {
   "imports": {
@@ -77,9 +75,20 @@
   }
 }
 </script>
-  <script type="module" crossorigin src="/assets/index-BztF6-Wn.js"></script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
-</body>
+    <!-- 
+      Corrected entry point: 
+      1. Pointing to index.tsx (since that is the file you have).
+      2. Setting type to text/babel so the Babel script above handles the transpilation.
+      3. Setting presets to handle both React (JSX) and TypeScript.
+    -->
+    <script 
+      type="text/babel" 
+      data-presets="react,typescript" 
+      data-type="module" 
+      src="index.tsx"
+    ></script>
+  </body>
 </html>
