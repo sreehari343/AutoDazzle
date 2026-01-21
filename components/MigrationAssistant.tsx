@@ -1,9 +1,14 @@
-
 import React, { useState } from 'react';
-import { analyzeDataStructure } from '../services/geminiService';
-import { AIAnalysisResult, Transaction } from '../types';
-import { useERP } from '../contexts/ERPContext';
-import { Upload, Database, FileText, CheckCircle, Loader2, AlertTriangle, Download, ShieldCheck, Server, Lock, RefreshCcw, Trash2, Cloud, Wifi, Smartphone, Laptop, Image as ImageIcon, Building, Key, ShieldAlert, Copy, CheckCircle2, AlertCircle } from 'lucide-react';
+import { analyzeDataStructure } from '../services/geminiService.ts';
+import { AIAnalysisResult, Transaction } from '../types.ts';
+import { useERP } from '../contexts/ERPContext.tsx';
+import { 
+  Upload, Database, FileText, CheckCircle, Loader2, AlertTriangle, 
+  Download, ShieldCheck, Server, Lock, RefreshCcw, Trash2, Cloud, 
+  Wifi, Smartphone, Laptop, Image as ImageIcon, Building, Key, 
+  ShieldAlert, Copy, CheckCircle2, AlertCircle, Sparkles, X, Info,
+  ArrowRightLeft
+} from 'lucide-react';
 
 export const MigrationAssistant: React.FC = () => {
   const { 
@@ -63,8 +68,8 @@ export const MigrationAssistant: React.FC = () => {
     try {
       const analysis = await analyzeDataStructure(inputText);
       setResult(analysis);
-    } catch (err) {
-      setError("Failed to analyze data. Please verify your API Key and try again.");
+    } catch (err: any) {
+      setError(err.message || "Failed to analyze data structure. Please verify environment configuration.");
     } finally {
       setLoading(false);
     }
@@ -107,12 +112,12 @@ export const MigrationAssistant: React.FC = () => {
         version: "2.0",
         company: "Auto Dazzle Spa",
         modules: {
-            customers: customers,
-            jobs: jobs,
+            customers,
+            jobs,
             financials: accounts,
-            transactions: transactions,
-            staff: staff,
-            inventory: inventory
+            transactions,
+            staff,
+            inventory
         }
     };
     const dataStr = JSON.stringify(systemData, null, 2);
@@ -226,158 +231,209 @@ export const MigrationAssistant: React.FC = () => {
                         </div>
                     </form>
                 </div>
-
-                <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                    <h4 className="font-black text-slate-800 uppercase text-[10px] mb-4 flex items-center gap-2 tracking-widest">
-                        <Building size={14}/> Business Info
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4 opacity-60">
-                        <div className="col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Entity Name</label>
-                            <input type="text" defaultValue="Auto Dazzle Detailing Spa" className="w-full p-2 border border-slate-300 rounded-md text-sm font-bold bg-slate-50" readOnly />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Primary Currency</label>
-                            <input type="text" defaultValue="INR (₹)" className="w-full p-2 border border-slate-300 rounded-md text-sm font-bold bg-slate-50" readOnly />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tax Engine</label>
-                            <input type="text" defaultValue="GST (18%)" className="w-full p-2 border border-slate-300 rounded-md text-sm font-bold bg-slate-50" readOnly />
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
       )}
 
       {activeTab === 'CLOUD' && (
          <div className="space-y-6">
-             <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-8 rounded-lg shadow-xl border-b-4 border-red-600">
-                 <div className="flex items-center gap-4 mb-4">
-                     <div className="p-3 bg-white/10 rounded-lg"><Cloud size={24} className="text-red-500" /></div>
-                     <div>
-                         <h3 className="text-2xl font-black uppercase tracking-tighter">Device Sync</h3>
-                         <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Global Data Continuity</p>
-                     </div>
-                 </div>
-                 <div className="flex items-center justify-center gap-8 mt-10">
-                    <Laptop size={40} className="opacity-40"/>
-                    <div className="h-0.5 w-16 bg-white/10"></div>
-                    <Server size={40} className="text-red-600 opacity-90"/>
-                    <div className="h-0.5 w-16 bg-white/10"></div>
-                    <Smartphone size={40} className="opacity-40"/>
-                 </div>
-             </div>
+             <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-8 rounded-xl border border-slate-700 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-12 opacity-10"><Cloud size={120} /></div>
+                <div className="relative z-10">
+                    <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Cloud Persistence Engine</h4>
+                    <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.3em] mb-8">PostgreSQL / Supabase Integration</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">Project Endpoint URL</label>
+                            <input 
+                                type="text" 
+                                value={cloudUrl}
+                                onChange={e => setCloudUrl(e.target.value)}
+                                placeholder="https://your-project.supabase.co"
+                                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">Service Role API Key</label>
+                            <input 
+                                type="password" 
+                                value={cloudKey}
+                                onChange={e => setCloudKey(e.target.value)}
+                                placeholder="supabase-anon-key"
+                                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50"
+                            />
+                        </div>
+                    </div>
 
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                     <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 tracking-widest">Supabase Integration</h4>
-                     <div className="space-y-4">
-                         <div>
-                             <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Project Endpoint</label>
-                             <input type="text" value={cloudUrl} onChange={e => setCloudUrl(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-lg text-xs font-bold bg-slate-50 outline-none focus:ring-2 focus:ring-red-600/20" placeholder="https://xyz.supabase.co" />
-                         </div>
-                         <div>
-                             <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">Service Role Key</label>
-                             <input type="password" value={cloudKey} onChange={e => setCloudKey(e.target.value)} className="w-full p-2.5 border border-slate-200 rounded-lg text-xs font-bold bg-slate-50 outline-none focus:ring-2 focus:ring-red-600/20" placeholder="..." />
-                         </div>
-                         <button 
+                    <div className="mt-8 flex items-center gap-6">
+                        <button 
                             onClick={handleConnect}
                             disabled={isConnecting}
-                            className={`w-full py-3 rounded-lg font-black text-white uppercase text-[10px] tracking-[0.2em] shadow-lg transition-all ${isCloudConnected ? 'bg-green-600' : 'bg-slate-900 hover:bg-black'}`}
-                         >
-                             {isConnecting ? 'Authenticating...' : isCloudConnected ? 'Sync Active' : 'Establish Link'}
-                         </button>
-                     </div>
-                 </div>
-
-                 <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                     <h4 className="font-black text-slate-800 uppercase text-[10px] mb-4 tracking-widest">Go-Live Checklist</h4>
-                     <div className="space-y-3">
-                         <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-100">
-                             <div className={`w-5 h-5 rounded-full flex items-center justify-center ${isCloudConnected ? 'bg-green-100 text-green-600' : 'bg-slate-200 text-slate-400'}`}>
-                                 <CheckCircle2 size={14}/>
-                             </div>
-                             <span className="text-[10px] font-bold text-slate-600 uppercase">1. Cloud Link Status</span>
-                         </div>
-                         <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-100">
-                             <div className="w-5 h-5 rounded-full flex items-center justify-center bg-slate-200 text-slate-400">
-                                 <CheckCircle2 size={14}/>
-                             </div>
-                             <span className="text-[10px] font-bold text-slate-600 uppercase">2. Import Services (Excel)</span>
-                         </div>
-                         <div className="p-3 bg-amber-50 rounded border border-amber-100 flex gap-2">
-                             <AlertCircle size={16} className="text-amber-600 shrink-0"/>
-                             <p className="text-[9px] text-amber-800 font-bold uppercase leading-tight">
-                                 GitHub Note: If your page is blank on GitHub, you MUST run "npm run build" and upload the "dist" folder. GitHub cannot read .tsx files directly.
-                             </p>
-                         </div>
-                     </div>
-                 </div>
+                            className="px-10 py-4 bg-red-600 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-red-700 shadow-xl shadow-red-600/20 transition-all flex items-center gap-3 disabled:bg-slate-700"
+                        >
+                            {isConnecting ? <Loader2 className="animate-spin" size={16} /> : <Wifi size={16} />}
+                            {isConnecting ? 'Establishing Link...' : 'Establish Cloud Link'}
+                        </button>
+                        
+                        <div className="flex items-center gap-3">
+                            <div className={`w-3 h-3 rounded-full ${isCloudConnected ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`}></div>
+                            <span className="text-[10px] font-black text-white uppercase tracking-widest">
+                                Status: {isCloudConnected ? 'CONNECTED' : 'LOCAL ONLY'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
              </div>
          </div>
       )}
 
       {activeTab === 'BACKUP' && (
-          <div className="bg-white p-10 rounded-xl shadow-sm border border-slate-200 text-center">
-                <ShieldCheck size={64} className="mx-auto text-green-500 mb-6" />
-                <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter mb-2">Immutable Backups</h3>
-                <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-10">Localized snapshots for cold storage</p>
-                
-                <div className="flex flex-col md:flex-row gap-4 justify-center max-w-lg mx-auto">
-                    <button onClick={handleFullSystemBackup} className="flex-1 py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-[10px] tracking-widest hover:bg-black shadow-lg">
-                        Export Full State
-                    </button>
-                    <div className="relative flex-1">
-                       <input type="file" accept=".json" onChange={handleRestore} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                       <button className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-lg font-black uppercase text-[10px] tracking-widest hover:bg-slate-50 transition-colors">
-                          Import State File
-                       </button>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center text-center">
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6">
+                    <Download size={32} />
+                </div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Export Local Database</h4>
+                <p className="text-sm text-slate-500 mb-8 max-w-xs">Download a full JSON snapshot of your customers, financials, and inventory for safe keeping.</p>
+                <button 
+                    onClick={handleFullSystemBackup}
+                    className="w-full py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-black transition-all shadow-lg"
+                >
+                    Generate Backup File
+                </button>
+            </div>
+
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-6">
+                    <RefreshCcw size={32} />
+                </div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Restore from Backup</h4>
+                <p className="text-sm text-slate-500 mb-8 max-w-xs">Upload a previously generated .json file to overwrite the current local database.</p>
+                <label className="w-full">
+                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
+                    <div className="w-full py-4 bg-white border-2 border-slate-900 text-slate-900 rounded-lg font-black uppercase text-xs tracking-widest text-center cursor-pointer hover:bg-slate-50 transition-all">
+                        Upload & Restore
+                    </div>
+                </label>
+            </div>
+
+            <div className="md:col-span-2 p-6 bg-red-50 rounded-xl border border-red-200 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <AlertTriangle className="text-red-600" size={24} />
+                    <div>
+                        <p className="text-sm font-black text-red-900 uppercase">Factory Reset</p>
+                        <p className="text-xs text-red-700 font-bold uppercase">This will permanently delete ALL local data records.</p>
                     </div>
                 </div>
-
-                <div className="mt-8 pt-8 border-t border-slate-100">
-                    <button onClick={resetToFactory} className="text-red-500 text-xs font-bold uppercase hover:text-red-700 flex items-center justify-center gap-2 mx-auto">
-                        <Trash2 size={14} /> Reset to Factory Settings
-                    </button>
-                </div>
-             </div>
+                <button 
+                    onClick={resetToFactory}
+                    className="px-6 py-3 bg-red-600 text-white rounded-lg font-black uppercase text-[10px] tracking-widest hover:bg-red-700 shadow-lg shadow-red-600/20"
+                >
+                    Wipe System
+                </button>
+            </div>
+        </div>
       )}
-      
+
       {activeTab === 'MIGRATION' && (
-          <div className="space-y-6">
-              <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8">
+        <div className="space-y-6">
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest">
+                    <Sparkles size={14} className="text-amber-500"/> AI Migration Assistant
+                </h4>
+                
+                <div className="space-y-4">
+                    <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                        Paste a sample of your legacy data (CSV, Excel rows, or SQL DDL) below. 
+                        Gemini AI will analyze the structure and propose a mapping plan to our modular ERP schema.
+                    </p>
+                    
+                    <textarea 
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        placeholder="Paste data snippet here..."
+                        className="w-full h-40 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all"
+                    />
+
+                    <div className="flex justify-end">
+                        <button 
+                            onClick={handleAnalyze}
+                            disabled={loading}
+                            className="px-8 py-3 bg-slate-900 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black flex items-center gap-2 disabled:bg-slate-400"
+                        >
+                            {loading ? <Loader2 className="animate-spin" size={14} /> : <Database size={14} />}
+                            {loading ? 'AI Analyzing...' : 'Analyze Structure'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {error && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+                    <AlertCircle className="text-red-600 shrink-0" size={18} />
+                    <p className="text-xs font-bold text-red-800 uppercase leading-relaxed">{error}</p>
+                </div>
+            )}
+
+            {result && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800 shadow-xl">
+                        <h5 className="text-amber-500 font-black uppercase text-[10px] mb-4 tracking-widest">Proposed SQL Schema</h5>
+                        <pre className="text-[10px] font-mono text-slate-300 leading-relaxed whitespace-pre-wrap h-[300px] overflow-y-auto custom-scrollbar">
+                            {result.proposedSchema}
+                        </pre>
+                    </div>
+                    <div className="space-y-6">
+                        <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm h-[300px] overflow-y-auto custom-scrollbar">
+                            <h5 className="text-slate-800 font-black uppercase text-[10px] mb-4 tracking-widest">Migration Plan</h5>
+                            <div className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
+                                {result.migrationPlan}
+                            </div>
+                        </div>
+                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                            <h5 className="text-amber-800 font-black uppercase text-[9px] mb-2 tracking-widest flex items-center gap-2">
+                                <Info size={12}/> Integrity Warnings
+                            </h5>
+                            <p className="text-[10px] text-amber-900 font-medium">
+                                {result.dataIntegrityNotes}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Historical Transaction Import */}
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
                 <div className="flex justify-between items-center mb-6">
-                    <h4 className="text-lg font-black uppercase text-slate-800 tracking-tight flex items-center gap-2">
-                        <FileText size={20} className="text-blue-600"/> Historical Transactions
+                    <h4 className="font-black text-slate-800 uppercase text-[10px] tracking-widest flex items-center gap-2">
+                        <ArrowRightLeft size={14} className="text-blue-600"/> Batch Transaction Import
                     </h4>
-                    <button onClick={copyTxTemplate} className="text-[10px] bg-blue-50 text-blue-700 px-3 py-1.5 rounded hover:bg-blue-100 font-bold flex items-center gap-1 border border-blue-200">
-                        <Copy size={12}/> Copy Format Template
-                    </button>
+                    <button onClick={copyTxTemplate} className="text-[10px] font-black text-blue-600 uppercase hover:underline">Copy Template</button>
                 </div>
                 
-                <div className="p-4 bg-slate-50 border border-slate-100 rounded-lg mb-4">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase mb-2">Required CSV Columns:</p>
-                    <code className="text-xs font-mono bg-white p-2 rounded border border-slate-200 block mb-2 text-slate-700">YYYY-MM-DD, TYPE, Category, Amount, Description, Method</code>
-                    <p className="text-[10px] text-slate-400 leading-relaxed">
-                        Values for TYPE: <b>INCOME</b> or <b>EXPENSE</b>.<br/>
-                        Values for Method: <b>CASH, CARD, UPI, TRANSFER</b>.
+                <div className="space-y-4">
+                    <p className="text-xs text-slate-600 font-medium">
+                        Directly inject historical income/expense records into the Ledger. 
+                        Format: <code className="bg-slate-100 px-1 rounded">YYYY-MM-DD, TYPE, Category, Amount, Description, Method</code>
                     </p>
+                    <textarea 
+                        value={txImportText}
+                        onChange={(e) => setTxImportText(e.target.value)}
+                        placeholder="2024-11-01, INCOME, Service Sales, 5000, Day Sales, CASH"
+                        className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none focus:border-blue-500 transition-all"
+                    />
+                    <div className="flex justify-end">
+                        <button 
+                            onClick={handleBulkTxImport}
+                            className="px-8 py-3 bg-blue-600 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-600/20"
+                        >
+                            Process Batch Upload
+                        </button>
+                    </div>
                 </div>
-
-                <textarea 
-                    className="w-full h-48 p-4 bg-white border border-slate-300 rounded-xl font-mono text-xs focus:ring-2 focus:ring-blue-600/20 outline-none mb-4 text-black" 
-                    value={txImportText} 
-                    onChange={(e) => setTxImportText(e.target.value)} 
-                    placeholder={`2024-11-01, INCOME, Service Sales, 5000, Daily Sales, CASH\n2024-11-02, EXPENSE, Rent, 15000, Shop Rent Nov, TRANSFER`}
-                />
-                <div className="flex justify-end">
-                    <button onClick={handleBulkTxImport} disabled={!txImportText} className="px-6 py-3 bg-slate-900 text-white rounded-lg font-black uppercase text-[10px] tracking-widest shadow-lg hover:bg-black disabled:bg-slate-300">
-                        Import Transaction History
-                    </button>
-                </div>
-              </div>
-          </div>
+            </div>
+        </div>
       )}
     </div>
   );
