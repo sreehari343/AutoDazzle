@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+// Including the .tsx extension is mandatory for the browser to find the file
 import App from './App.tsx';
 
 const rootElement = document.getElementById('root');
