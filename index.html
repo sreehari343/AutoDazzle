@@ -3,32 +3,63 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Auto Dazzle Detailing Spa</title>
+    <title>Auto Dazzle ERP</title>
     
-    <!-- Tailwind and Babel -->
+    <!-- Scripts -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <script>
-      // 1. POLYFILL: Define 'process' so the browser doesn't crash on Gemini service calls
+      // 1. Define 'process' for Gemini and other Node-style libs
       window.process = { env: { API_KEY: "" } };
 
-      // 2. ERROR CATCHER: If the screen is blank, this will show us WHY
+      // 2. Diagnostic Failsafe
+      let appLoaded = false;
+      setTimeout(() => {
+        if (!appLoaded) {
+          const root = document.getElementById('root');
+          if (root && root.innerHTML.includes('Initializing')) {
+            root.innerHTML = `
+              <div class="flex items-center justify-center min-h-screen bg-slate-900 text-white p-8">
+                <div class="max-w-md w-full bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl">
+                  <h2 class="text-xl font-bold text-red-500 mb-4">⚠️ Slow Initialization</h2>
+                  <p class="text-sm text-slate-300 mb-6 leading-relaxed">
+                    The app is taking longer than usual to start. This usually happens if:
+                    <ul class="list-disc ml-5 mt-2 space-y-1 text-xs text-slate-400">
+                      <li>Files are still being uploaded to GitHub.</li>
+                      <li>You are using an older browser.</li>
+                      <li>There is a missing file (like App.tsx).</li>
+                    </ul>
+                  </p>
+                  <button onclick="window.location.reload(true)" class="w-full py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold uppercase text-xs tracking-widest transition-all mb-3">
+                    Force Refresh (Clear Cache)
+                  </button>
+                  <p class="text-[10px] text-center text-slate-500">Check browser console (F12) for detailed errors.</p>
+                </div>
+              </div>
+            `;
+          }
+        }
+      }, 8000);
+
+      // 3. Global Error Handler
       window.onerror = function(message, source, lineno, colno, error) {
+        appLoaded = true; // Stop the timeout
         const root = document.getElementById('root');
         if (root) {
           root.innerHTML = `
-            <div style="padding: 20px; color: #721c24; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; font-family: sans-serif; margin: 20px;">
-              <h2 style="margin-top: 0;">⚠️ App Load Error</h2>
-              <p><strong>Message:</strong> ${message}</p>
-              <p><strong>File:</strong> ${source} (Line: ${lineno})</p>
-              <p style="font-size: 12px; margin-top: 10px; color: #444;">Please hard-refresh (Ctrl+F5) or check if all .tsx files are uploaded to the main folder.</p>
+            <div style="padding: 20px; color: #fff; background: #1e293b; font-family: sans-serif; min-height: 100vh;">
+              <div style="max-width: 600px; margin: 0 auto; background: #ef4444; padding: 20px; border-radius: 8px;">
+                <h2 style="margin: 0 0 10px 0;">🚀 Startup Error</h2>
+                <p><strong>Error:</strong> ${message}</p>
+                <p style="font-size: 12px; opacity: 0.8;">File: ${source} (Line: ${lineno})</p>
+                <button onclick="location.reload()" style="margin-top: 15px; padding: 8px 16px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">Retry</button>
+              </div>
             </div>
           `;
         }
-        return false;
       };
     </script>
 
@@ -36,32 +67,14 @@
       body {
         font-family: 'Inter', sans-serif;
         background-color: #f1f5f9;
-        color: #000;
         margin: 0;
       }
       .custom-scrollbar::-webkit-scrollbar { width: 6px; }
       .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-
       @media print {
-        @page { margin: 0; size: auto; }
-        html, body, #root, main, .overflow-auto, .overflow-hidden, .h-screen {
-          height: auto !important;
-          overflow: visible !important;
-          position: static !important;
-          width: 100% !important;
-          background: white !important;
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-        body.printing-invoice #root { display: none !important; }
-        body.printing-invoice .invoice-container-print {
-          display: block !important;
-          width: 100% !important;
-          padding: 2cm !important;
-        }
+        .print-hidden { display: none !important; }
       }
-      .invoice-container-print { display: none; }
     </style>
 
     <script type="importmap">
@@ -81,21 +94,31 @@
   </head>
   <body>
     <div id="root">
-      <!-- Loading State -->
       <div class="flex items-center justify-center min-h-screen bg-slate-900">
         <div class="text-center">
           <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-red-600 border-t-transparent mb-4"></div>
           <p class="text-white font-bold uppercase tracking-widest text-xs">Initializing Auto Dazzle ERP...</p>
+          <p id="loading-hint" class="text-slate-500 text-[10px] mt-4 uppercase">Loading system modules...</p>
         </div>
       </div>
     </div>
 
-    <!-- Entry Point -->
+    <!-- 
+      We use type="text/babel" so Babel Standalone fetches and transpiles 
+      the TSX files. We do NOT use type="module" here because GitHub Pages 
+      MIME types block .tsx modules.
+    -->
     <script 
       type="text/babel" 
       data-presets="react,typescript" 
-      data-type="module" 
       src="index.tsx"
     ></script>
+    
+    <script>
+      // Mark as loaded if React takes over
+      window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => { if(document.querySelector('.min-h-screen')) appLoaded = true; }, 1000);
+      });
+    </script>
   </body>
 </html>
