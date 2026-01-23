@@ -1,5 +1,4 @@
-
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { 
   MOCK_ACCOUNTS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_JOB_CARDS, 
@@ -33,7 +32,9 @@ interface ERPContextType {
   payrollHistory: PayrollRun[];
   isCloudConnected: boolean;
   syncStatus: 'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR';
+  lastSyncError: string | null;
   connectToCloud: (url: string, key: string) => Promise<boolean>;
+  syncAllLocalToCloud: () => Promise<void>;
   addJob: (job: JobCard) => void;
   updateJob: (job: JobCard) => void; 
   deleteJob: (id: string) => void; 
@@ -61,17 +62,55 @@ interface ERPContextType {
 
 const ERPContext = createContext<ERPContextType | undefined>(undefined);
 
-// Helper for lazy initialization
 const getInitialData = <T,>(key: string, defaultData: T): T => {
   try {
     const saved = localStorage.getItem(key);
-    if (saved) {
-      return JSON.parse(saved);
-    }
-  } catch (e) {
-    console.error(`Error loading ${key} from storage`, e);
-  }
+    if (saved) return JSON.parse(saved);
+  } catch (e) { console.error(`Error loading ${key}`, e); }
   return defaultData;
+};
+
+// --- DATABASE MAPPING UTILITIES ---
+const mapToDb = (table: string, data: any) => {
+    if (table === 'customers') return {
+        id: data.id, name: data.name, email: data.email, phone: data.phone, address: data.address,
+        lifetime_value: data.lifetimeValue, joined_date: data.joinedDate, visits: data.visits,
+        is_premium: data.isPremium, vehicles: data.vehicles
+    };
+    if (table === 'jobs') return {
+        id: data.id, ticket_number: data.ticketNumber, date: data.date, time_in: data.timeIn,
+        customer_id: data.customerId, segment: data.segment, service_ids: data.serviceIds,
+        assigned_staff_ids: data.assignedStaffIds, status: data.status, total: data.total,
+        tax: data.tax, notes: data.notes, payment_status: data.paymentStatus
+    };
+    if (table === 'staff') return {
+        id: data.id, name: data.name, role: data.role, email: data.email, phone: data.phone,
+        base_salary: data.baseSalary, active: data.active, joined_date: data.joinedDate,
+        current_advance: data.currentAdvance, loan_balance: data.loanBalance
+    };
+    if (table === 'transactions') return {
+        id: data.id, date: data.date, type: data.type, category: data.category,
+        amount: data.amount, method: data.method, description: data.description, reference_id: data.referenceId
+    };
+    return data;
+};
+
+const mapFromDb = (table: string, data: any) => {
+    if (table === 'customers') return {
+        ...data, lifetimeValue: data.lifetime_value, joinedDate: data.joined_date, isPremium: data.is_premium
+    };
+    if (table === 'jobs') return {
+        ...data, ticketNumber: data.ticket_number, timeIn: data.time_in, customerId: data.customer_id,
+        serviceIds: data.service_ids, assignedStaffIds: data.assigned_staff_ids, paymentStatus: data.payment_status
+    };
+    if (table === 'staff') return {
+        ...data, baseSalary: data.base_salary, joinedDate: data.joined_date, 
+        currentAdvance: data.current_advance, loanBalance: data.loan_balance
+    };
+    if (table === 'transactions') return {
+        ...data, referenceId: data.reference_id
+    };
+    return data;
 };
 
 export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -85,8 +124,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [isCloudConnected, setIsCloudConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR'>('OFFLINE');
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   
-  // Initialize state from localStorage immediately to prevent data loss on refresh/update
   const [logoUrl, setLogoUrl] = useState<string>(() => localStorage.getItem('erp_logo') || DEFAULT_LOGO);
   const [customers, setCustomers] = useState<Customer[]>(() => getInitialData('erp_customers', MOCK_CUSTOMERS));
   const [jobs, setJobs] = useState<JobCard[]>(() => getInitialData('erp_jobs', MOCK_JOB_CARDS));
@@ -101,6 +140,104 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [stockLogs, setStockLogs] = useState<StockTransaction[]>(() => getInitialData('erp_stock_logs', []));
   const [payrollHistory, setPayrollHistory] = useState<PayrollRun[]>(() => getInitialData('erp_payroll_history', []));
 
+  // --- Cloud Sync Engine: PUSH ---
+  const pushToCloud = useCallback(async (table: string, data: any) => {
+    if (!supabase || !isCloudConnected) return;
+    try {
+      setSyncStatus('SYNCING');
+      const dbPayload = mapToDb(table, data);
+      const { error } = await supabase.from(table).upsert(dbPayload);
+      if (error) throw error;
+      setSyncStatus('SYNCED');
+      setLastSyncError(null);
+    } catch (err: any) {
+      console.error(`Supabase Push Error [${table}]:`, err.message);
+      setSyncStatus('ERROR');
+      setLastSyncError(`Push failed: ${err.message}`);
+    }
+  }, [supabase, isCloudConnected]);
+
+  const removeFromCloud = useCallback(async (table: string, id: string) => {
+    if (!supabase || !isCloudConnected) return;
+    try {
+      setSyncStatus('SYNCING');
+      const { error } = await supabase.from(table).delete().eq('id', id);
+      if (error) throw error;
+      setSyncStatus('SYNCED');
+      setLastSyncError(null);
+    } catch (err: any) {
+      console.error(`Supabase Delete Error [${table}]:`, err.message);
+      setSyncStatus('ERROR');
+    }
+  }, [supabase, isCloudConnected]);
+
+  // --- Cloud Sync Engine: PULL (Multi-Browser Sync) ---
+  const pullFromCloud = useCallback(async (client: SupabaseClient) => {
+      try {
+          setSyncStatus('SYNCING');
+          const [cRes, jRes, sRes, tRes] = await Promise.all([
+              client.from('customers').select('*'),
+              client.from('jobs').select('*'),
+              client.from('staff').select('*'),
+              client.from('transactions').select('*')
+          ]);
+
+          if (cRes.data && cRes.data.length > 0) {
+              const mapped = cRes.data.map(d => mapFromDb('customers', d));
+              setCustomers(mapped);
+              persist('erp_customers', mapped);
+          }
+          if (jRes.data && jRes.data.length > 0) {
+              const mapped = jRes.data.map(d => mapFromDb('jobs', d));
+              setJobs(mapped);
+              persist('erp_jobs', mapped);
+          }
+          if (sRes.data && sRes.data.length > 0) {
+              const mapped = sRes.data.map(d => mapFromDb('staff', d));
+              setStaff(mapped);
+              persist('erp_staff', mapped);
+          }
+          if (tRes.data && tRes.data.length > 0) {
+              const mapped = tRes.data.map(d => mapFromDb('transactions', d));
+              setTransactions(mapped);
+              persist('erp_transactions', mapped);
+          }
+
+          setSyncStatus('SYNCED');
+          setLastSyncError(null);
+      } catch (err: any) {
+          console.error("Supabase Pull Error:", err.message);
+          setSyncStatus('ERROR');
+          setLastSyncError(`Pull failed: ${err.message}. Check SQL Schema.`);
+      }
+  }, []);
+
+  const syncAllLocalToCloud = async () => {
+      if (!supabase || !isCloudConnected) return;
+      try {
+          setSyncStatus('SYNCING');
+          // Map all existing local data to DB format
+          const cPayload = customers.map(c => mapToDb('customers', c));
+          const jPayload = jobs.map(j => mapToDb('jobs', j));
+          const sPayload = staff.map(s => mapToDb('staff', s));
+          const tPayload = transactions.map(t => mapToDb('transactions', t));
+
+          await Promise.all([
+            supabase.from('customers').upsert(cPayload),
+            supabase.from('jobs').upsert(jPayload),
+            supabase.from('staff').upsert(sPayload),
+            supabase.from('transactions').upsert(tPayload)
+          ]);
+          
+          setSyncStatus('SYNCED');
+          alert("All local data has been successfully pushed to the Cloud Database.");
+      } catch (err: any) {
+          console.error("Manual Sync Error:", err);
+          setSyncStatus('ERROR');
+          setLastSyncError(`Manual push failed: ${err.message}`);
+      }
+  };
+
   useEffect(() => {
     const savedUrl = localStorage.getItem('supabase_url');
     const savedKey = localStorage.getItem('supabase_key');
@@ -113,10 +250,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Persist Ledger Accounts specifically whenever they change (Critical Fix)
-  useEffect(() => {
-    localStorage.setItem('erp_accounts', JSON.stringify(accounts));
-  }, [accounts]);
+  useEffect(() => { localStorage.setItem('erp_accounts', JSON.stringify(accounts)); }, [accounts]);
 
   const login = (role: UserRole, password: string) => {
     if (passwords[role] === password) {
@@ -139,21 +273,25 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`pass_${role.toLowerCase()}`, newPass);
   };
 
-  const persist = (key: string, data: any) => {
-    localStorage.setItem(key, JSON.stringify(data));
-  };
+  const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
 
   const initSupabase = async (url: string, key: string) => {
     try {
       setSyncStatus('SYNCING');
       const client = createClient(url, key);
-      const { error } = await client.from('staff').select('*').limit(1);
+      
+      const { error } = await client.from('staff').select('id').limit(1);
       if (error) throw error;
+      
       setSupabase(client);
       setIsCloudConnected(true);
       setSyncStatus('SYNCED');
-    } catch (err) {
+      
+      await pullFromCloud(client);
+    } catch (err: any) {
+      console.error("Initialization failed:", err.message);
       setSyncStatus('ERROR');
+      setLastSyncError(err.message);
       setIsCloudConnected(false);
     }
   };
@@ -167,25 +305,27 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [...jobs, job];
     setJobs(updated);
     persist('erp_jobs', updated);
+    pushToCloud('jobs', job);
   };
 
   const updateJob = (job: JobCard) => {
     const updated = jobs.map(j => j.id === job.id ? job : j);
     setJobs(updated);
     persist('erp_jobs', updated);
+    pushToCloud('jobs', job);
   };
 
   const deleteJob = (id: string) => {
     const updated = jobs.filter(j => j.id !== id);
     setJobs(updated);
     persist('erp_jobs', updated);
+    removeFromCloud('jobs', id);
   };
 
   const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod: Transaction['method'] = 'CASH') => {
     const updatedJobs = jobs.map(j => {
       if (j.id === id) {
         if (status === 'INVOICED' && j.status !== 'INVOICED') {
-          // 1. Create Financial Transaction
           const tx: Transaction = {
             id: `tx-sale-${Date.now()}`,
             date: new Date().toISOString().split('T')[0],
@@ -197,16 +337,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             description: `Invoice ${j.ticketNumber} Payment (${paymentMethod})`
           };
           addTransaction(tx);
-
-          // 2. Link: Update Customer Stats (LTV & Visits)
           setCustomers(prevCustomers => {
             const updatedCusts = prevCustomers.map(c => {
                if (c.id === j.customerId) {
-                 return {
-                   ...c,
-                   visits: c.visits + 1,
-                   lifetimeValue: c.lifetimeValue + j.total,
-                 };
+                 const nc = { ...c, visits: c.visits + 1, lifetimeValue: c.lifetimeValue + j.total };
+                 pushToCloud('customers', nc);
+                 return nc;
                }
                return c;
             });
@@ -214,7 +350,9 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return updatedCusts;
           });
         }
-        return { ...j, status };
+        const updatedJob = { ...j, status };
+        pushToCloud('jobs', updatedJob);
+        return updatedJob;
       }
       return j;
     });
@@ -226,30 +364,35 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [...staff, member];
     setStaff(updated);
     persist('erp_staff', updated);
+    pushToCloud('staff', member);
   };
 
   const removeStaff = (id: string) => {
     const updated = staff.filter(s => s.id !== id);
     setStaff(updated);
     persist('erp_staff', updated);
+    removeFromCloud('staff', id);
   };
 
   const updateStaff = (updatedStaff: Staff) => {
     const updated = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
     setStaff(updated);
     persist('erp_staff', updated);
+    pushToCloud('staff', updatedStaff);
   };
 
   const addCustomer = (customer: Customer) => {
     const updated = [...customers, customer];
     setCustomers(updated);
     persist('erp_customers', updated);
+    pushToCloud('customers', customer);
   };
 
   const updateCustomer = (updatedCustomer: Customer) => {
     const updated = customers.map(c => c.id === updatedCustomer.id ? updatedCustomer : c);
     setCustomers(updated);
     persist('erp_customers', updated);
+    pushToCloud('customers', updatedCustomer);
   };
 
   const addPurchase = (purchase: PurchaseOrder) => {
@@ -263,26 +406,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setInventory(currentInventory => {
              const updatedInv = currentInventory.map(i => {
                 if (i.id === existingItem.id) {
-                   return { ...i, quantityOnHand: i.quantityOnHand + purchase.quantity, lastRestocked: purchase.date };
+                   const ni = { ...i, quantityOnHand: i.quantityOnHand + purchase.quantity, lastRestocked: purchase.date };
+                   return ni;
                 }
                 return i;
              });
              persist('erp_inventory', updatedInv);
              return updatedInv;
-          });
-
-          const log: StockTransaction = {
-             id: `stx-${Date.now()}`,
-             itemId: existingItem.id,
-             date: purchase.date,
-             type: 'RESTOCK',
-             quantity: purchase.quantity,
-             notes: `PO: ${purchase.docNumber}`
-          };
-          setStockLogs(prev => {
-              const newLogs = [...prev, log];
-              persist('erp_stock_logs', newLogs);
-              return newLogs;
           });
        }
     }
@@ -305,6 +435,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions(newTx);
     persist('erp_transactions', newTx);
     updateLedger([tx]);
+    pushToCloud('transactions', tx);
   };
 
   const bulkAddTransactions = (txs: Transaction[]) => {
@@ -312,6 +443,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions(newTx);
     persist('erp_transactions', newTx);
     updateLedger(txs);
+    txs.forEach(t => pushToCloud('transactions', t));
   };
 
   const updateLedger = (newTransactions: Transaction[]) => {
@@ -323,26 +455,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (tx.type === 'INCOME') return { ...acc, balance: acc.balance + tx.amount };
               if (tx.type === 'EXPENSE') return { ...acc, balance: acc.balance - tx.amount };
             }
-            if (tx.type === 'INCOME' && acc.code === '4000') {
-               return { ...acc, balance: acc.balance + tx.amount };
-            } 
+            if (tx.type === 'INCOME' && acc.code === '4000') return { ...acc, balance: acc.balance + tx.amount };
             if (tx.type === 'EXPENSE') {
                const cat = tx.category.toLowerCase();
-               if (acc.code === '1200' && (cat.includes('inventory') || cat.includes('stock'))) {
-                  return { ...acc, balance: acc.balance + tx.amount };
-               }
-               else if (acc.code === '5100' && (cat.includes('labor') || cat.includes('payroll') || cat.includes('salary'))) {
-                  return { ...acc, balance: acc.balance + tx.amount };
-               }
-               else if (acc.code === '5200' && cat.includes('rent')) {
-                  return { ...acc, balance: acc.balance + tx.amount };
-               }
-               else if (acc.code === '5300' && (cat.includes('utility') || cat.includes('power') || cat.includes('water'))) {
-                  return { ...acc, balance: acc.balance + tx.amount };
-               }
-               else if (acc.code === '5000' && !cat.includes('labor') && !cat.includes('rent') && !cat.includes('utility') && !cat.includes('inventory')) {
-                  return { ...acc, balance: acc.balance + tx.amount };
-               }
+               if (acc.code === '1200' && (cat.includes('inventory') || cat.includes('stock'))) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5100' && (cat.includes('labor') || cat.includes('payroll') || cat.includes('salary'))) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5200' && cat.includes('rent')) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5300' && (cat.includes('utility') || cat.includes('power') || cat.includes('water'))) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5000' && !cat.includes('labor') && !cat.includes('rent') && !cat.includes('utility') && !cat.includes('inventory')) return { ...acc, balance: acc.balance + tx.amount };
             }
             return acc;
          });
@@ -353,8 +473,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const executePayroll = (month: string, payrollData: any[]) => {
     const totalPayroll = payrollData.reduce((sum, p) => sum + p.netPay, 0);
-    
-    // 1. Create Financial Transaction
     const tx: Transaction = {
       id: `tx-pay-${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
@@ -365,27 +483,21 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       description: `Staff Payroll Execution - ${payrollData.length} Employees (${month})`
     };
     addTransaction(tx);
-
-    // 2. Update Staff Balances (Loans/Advances)
     setStaff(prevStaff => {
         const updatedStaff = prevStaff.map(s => {
             const record = payrollData.find((p: any) => p.id === s.id);
             if (!record || !record.deductionsObj) return s;
-
-            const loanDeduction = record.deductionsObj.loan || 0;
-            const advanceDeduction = record.deductionsObj.advance || 0;
-
-            return {
+            const ns = {
                 ...s,
-                loanBalance: Math.max(0, s.loanBalance - loanDeduction),
-                currentAdvance: Math.max(0, s.currentAdvance - advanceDeduction)
+                loanBalance: Math.max(0, s.loanBalance - (record.deductionsObj.loan || 0)),
+                currentAdvance: Math.max(0, s.currentAdvance - (record.deductionsObj.advance || 0))
             };
+            pushToCloud('staff', ns);
+            return ns;
         });
         persist('erp_staff', updatedStaff);
         return updatedStaff;
     });
-
-    // 3. Save Payroll Snapshot (History)
     const runSnapshot: PayrollRun = {
       id: `pr-${month}-${Date.now()}`,
       month: month,
@@ -394,11 +506,8 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       records: payrollData,
       status: 'FINALIZED'
     };
-    
     setPayrollHistory(prev => {
-      // Remove existing for this month if any (re-run support)
-      const filtered = prev.filter(p => p.month !== month);
-      const updated = [...filtered, runSnapshot];
+      const updated = [...prev.filter(p => p.month !== month), runSnapshot];
       persist('erp_payroll_history', updated);
       return updated;
     });
@@ -420,25 +529,15 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setInventory(currentInventory => {
           const updated = currentInventory.map(i => {
               if (i.id === itemId) {
-                  const currentQty = typeof i.quantityOnHand === 'number' ? i.quantityOnHand : 0;
-                  const newQty = Math.max(0, currentQty - quantity);
-                  return { ...i, quantityOnHand: newQty };
+                  return { ...i, quantityOnHand: Math.max(0, (i.quantityOnHand || 0) - quantity) };
               }
               return i;
           });
           persist('erp_inventory', updated);
           return updated;
       });
-
-      const log: StockTransaction = {
-          id: `stx-${Date.now()}`,
-          itemId,
-          date: new Date().toISOString().split('T')[0],
-          type: 'USAGE',
-          quantity,
-          notes
-      };
       setStockLogs(prev => {
+          const log = { id: `stx-${Date.now()}`, itemId, date: new Date().toISOString().split('T')[0], type: 'USAGE' as const, quantity, notes };
           const newLogs = [...prev, log];
           persist('erp_stock_logs', newLogs);
           return newLogs;
@@ -509,7 +608,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       currentUserRole, isAuthenticated, login, logout, updatePassword,
       logoUrl, updateLogo,
       customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
-      isCloudConnected, syncStatus, connectToCloud,
+      isCloudConnected, syncStatus, lastSyncError, connectToCloud, syncAllLocalToCloud,
       addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
       addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, addCustomer, updateCustomer, addPurchase, addTransaction, bulkAddTransactions, executePayroll
     }}>
