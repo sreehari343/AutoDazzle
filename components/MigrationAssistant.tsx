@@ -12,7 +12,7 @@ import {
 
 export const MigrationAssistant: React.FC = () => {
   const { 
-    customers, jobs, transactions, staff, inventory, accounts, 
+    customers, jobs, transactions, staff, inventory, accounts, purchases,
     restoreData, resetToFactory, connectToCloud, isCloudConnected, syncStatus, lastSyncError,
     logoUrl, updateLogo, currentUserRole, updatePassword, bulkAddTransactions, syncAllLocalToCloud
   } = useERP();
@@ -115,13 +115,15 @@ export const MigrationAssistant: React.FC = () => {
   };
 
   const copySupabaseSql = () => {
-      const sql = `-- AUTO DAZZLE ERP SCHEMA
+      const sql = `-- AUTO DAZZLE ERP FULL SCHEMA
 CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, address TEXT, lifetime_value NUMERIC DEFAULT 0, joined_date DATE DEFAULT CURRENT_DATE, visits INTEGER DEFAULT 0, is_premium BOOLEAN DEFAULT FALSE, vehicles JSONB DEFAULT '[]'::jsonb);
-CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id), segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC, tax NUMERIC, notes TEXT, payment_status TEXT);
-CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
-CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC, method TEXT, description TEXT, reference_id TEXT);`;
+CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC DEFAULT 0, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL, segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC DEFAULT 0, tax NUMERIC DEFAULT 0, notes TEXT, payment_status TEXT);
+CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC DEFAULT 0, method TEXT, description TEXT, reference_id TEXT);
+CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, unit TEXT, quantity_on_hand NUMERIC DEFAULT 0, reorder_point NUMERIC DEFAULT 0, cost_per_unit NUMERIC DEFAULT 0, supplier TEXT, last_restocked DATE);
+CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, doc_number TEXT, vendor_name TEXT, item_name TEXT, quantity NUMERIC, unit TEXT, rate NUMERIC, amount NUMERIC, status TEXT, category TEXT);`;
       navigator.clipboard.writeText(sql);
-      alert("SQL Schema copied! Paste this into Supabase SQL Editor.");
+      alert("Full SQL Schema copied! Paste this into Supabase SQL Editor.");
   };
 
   const handleFullSystemBackup = () => {
@@ -135,7 +137,8 @@ CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT 
             financials: accounts,
             transactions,
             staff,
-            inventory
+            inventory,
+            purchases
         }
     };
     const dataStr = JSON.stringify(systemData, null, 2);
@@ -314,7 +317,7 @@ CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT 
                             <div>
                                 <p className="text-xs font-black text-red-400 uppercase tracking-widest">Connection Diagnostics</p>
                                 <p className="text-[11px] text-red-200 mt-1 font-mono">{lastSyncError}</p>
-                                <p className="text-[10px] text-slate-500 mt-2 italic font-medium uppercase tracking-tight">Solution: Ensure you have run the SQL Schema in your Supabase SQL Editor and enabled Row-Level Security policies or used the 'service_role' key.</p>
+                                <p className="text-[10px] text-slate-500 mt-2 italic font-medium uppercase tracking-tight">Solution: Ensure you have run the SQL Schema in your Supabase SQL Editor and disabled Row-Level Security policies or used the 'service_role' key.</p>
                             </div>
                         </div>
                     )}
@@ -329,7 +332,7 @@ CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT 
                         </div>
                         <div>
                             <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Populate Cloud Database</h4>
-                            <p className="text-xs text-emerald-700 font-medium max-w-md">Push all current local records (Customers, Jobs, Staff, Transactions) to the Supabase database. Use this for initial setup.</p>
+                            <p className="text-xs text-emerald-700 font-medium max-w-md">Push all current local records (Customers, Jobs, Staff, Transactions, Inventory) to the Supabase database. Use this for initial setup.</p>
                         </div>
                     </div>
                     <button 
@@ -455,7 +458,7 @@ CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
                     <div className="bg-slate-900 p-6 rounded-lg border border-slate-800 shadow-xl">
                         <h5 className="text-amber-500 font-black uppercase text-[10px] mb-4 tracking-widest">Proposed SQL Schema</h5>
-                        <pre className="text-[10px] font-mono text-slate-300 leading-relaxed whitespace-pre-wrap h-[300px] overflow-y-auto custom-scrollbar">
+                        <pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap h-[300px] overflow-y-auto custom-scrollbar">
                             {result.proposedSchema}
                         </pre>
                     </div>
