@@ -92,6 +92,16 @@ const mapToDb = (table: string, data: any) => {
         id: data.id, date: data.date, type: data.type, category: data.category,
         amount: data.amount, method: data.method, description: data.description, reference_id: data.referenceId
     };
+    if (table === 'inventory') return {
+        id: data.id, sku: data.sku, name: data.name, category: data.category, unit: data.unit,
+        quantity_on_hand: data.quantityOnHand, reorder_point: data.reorderPoint,
+        cost_per_unit: data.costPerUnit, supplier: data.supplier, last_restocked: data.lastRestocked
+    };
+    if (table === 'purchases') return {
+        id: data.id, date: data.date, doc_number: data.docNumber, vendor_name: data.vendorName,
+        item_name: data.itemName, quantity: data.quantity, unit: data.unit, rate: data.rate,
+        amount: data.amount, status: data.status, category: data.category
+    };
     return data;
 };
 
@@ -109,6 +119,13 @@ const mapFromDb = (table: string, data: any) => {
     };
     if (table === 'transactions') return {
         ...data, referenceId: data.reference_id
+    };
+    if (table === 'inventory') return {
+        ...data, quantityOnHand: data.quantity_on_hand, reorderPoint: data.reorder_point,
+        costPerUnit: data.cost_per_unit, lastRestocked: data.last_restocked
+    };
+    if (table === 'purchases') return {
+        ...data, docNumber: data.doc_number, vendorName: data.vendor_name, itemName: data.item_name
     };
     return data;
 };
@@ -140,7 +157,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [stockLogs, setStockLogs] = useState<StockTransaction[]>(() => getInitialData('erp_stock_logs', []));
   const [payrollHistory, setPayrollHistory] = useState<PayrollRun[]>(() => getInitialData('erp_payroll_history', []));
 
-  // --- Cloud Sync Engine: PUSH ---
+  // --- Cloud Sync Engine ---
   const pushToCloud = useCallback(async (table: string, data: any) => {
     if (!supabase || !isCloudConnected) return;
     try {
@@ -171,36 +188,47 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [supabase, isCloudConnected]);
 
-  // --- Cloud Sync Engine: PULL (Multi-Browser Sync) ---
   const pullFromCloud = useCallback(async (client: SupabaseClient) => {
       try {
           setSyncStatus('SYNCING');
-          const [cRes, jRes, sRes, tRes] = await Promise.all([
+          const [cRes, jRes, sRes, tRes, iRes, pRes] = await Promise.all([
               client.from('customers').select('*'),
               client.from('jobs').select('*'),
               client.from('staff').select('*'),
-              client.from('transactions').select('*')
+              client.from('transactions').select('*'),
+              client.from('inventory').select('*'),
+              client.from('purchases').select('*')
           ]);
 
-          if (cRes.data && cRes.data.length > 0) {
+          if (cRes.data) {
               const mapped = cRes.data.map(d => mapFromDb('customers', d));
               setCustomers(mapped);
               persist('erp_customers', mapped);
           }
-          if (jRes.data && jRes.data.length > 0) {
+          if (jRes.data) {
               const mapped = jRes.data.map(d => mapFromDb('jobs', d));
               setJobs(mapped);
               persist('erp_jobs', mapped);
           }
-          if (sRes.data && sRes.data.length > 0) {
+          if (sRes.data) {
               const mapped = sRes.data.map(d => mapFromDb('staff', d));
               setStaff(mapped);
               persist('erp_staff', mapped);
           }
-          if (tRes.data && tRes.data.length > 0) {
+          if (tRes.data) {
               const mapped = tRes.data.map(d => mapFromDb('transactions', d));
               setTransactions(mapped);
               persist('erp_transactions', mapped);
+          }
+          if (iRes.data) {
+              const mapped = iRes.data.map(d => mapFromDb('inventory', d));
+              setInventory(mapped);
+              persist('erp_inventory', mapped);
+          }
+          if (pRes.data) {
+              const mapped = pRes.data.map(d => mapFromDb('purchases', d));
+              setPurchases(mapped);
+              persist('erp_purchases', mapped);
           }
 
           setSyncStatus('SYNCED');
@@ -216,17 +244,20 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!supabase || !isCloudConnected) return;
       try {
           setSyncStatus('SYNCING');
-          // Map all existing local data to DB format
           const cPayload = customers.map(c => mapToDb('customers', c));
           const jPayload = jobs.map(j => mapToDb('jobs', j));
           const sPayload = staff.map(s => mapToDb('staff', s));
           const tPayload = transactions.map(t => mapToDb('transactions', t));
+          const iPayload = inventory.map(i => mapToDb('inventory', i));
+          const pPayload = purchases.map(p => mapToDb('purchases', p));
 
           await Promise.all([
             supabase.from('customers').upsert(cPayload),
             supabase.from('jobs').upsert(jPayload),
             supabase.from('staff').upsert(sPayload),
-            supabase.from('transactions').upsert(tPayload)
+            supabase.from('transactions').upsert(tPayload),
+            supabase.from('inventory').upsert(iPayload),
+            supabase.from('purchases').upsert(pPayload)
           ]);
           
           setSyncStatus('SYNCED');
@@ -249,8 +280,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsAuthenticated(true);
     }
   }, []);
-
-  useEffect(() => { localStorage.setItem('erp_accounts', JSON.stringify(accounts)); }, [accounts]);
 
   const login = (role: UserRole, password: string) => {
     if (passwords[role] === password) {
@@ -399,6 +428,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updatedPurchases = [...purchases, purchase];
     setPurchases(updatedPurchases);
     persist('erp_purchases', updatedPurchases);
+    pushToCloud('purchases', purchase);
 
     if (purchase.category === 'INVENTORY') {
        const existingItem = inventory.find(i => i.name === purchase.itemName);
@@ -407,6 +437,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
              const updatedInv = currentInventory.map(i => {
                 if (i.id === existingItem.id) {
                    const ni = { ...i, quantityOnHand: i.quantityOnHand + purchase.quantity, lastRestocked: purchase.date };
+                   pushToCloud('inventory', ni);
                    return ni;
                 }
                 return i;
@@ -517,19 +548,23 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [...inventory, item];
     setInventory(updated);
     persist('erp_inventory', updated);
+    pushToCloud('inventory', item);
   };
 
   const deleteInventoryItem = (id: string) => {
     const updated = inventory.filter(i => i.id !== id);
     setInventory(updated);
     persist('erp_inventory', updated);
+    removeFromCloud('inventory', id);
   };
 
   const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
       setInventory(currentInventory => {
           const updated = currentInventory.map(i => {
               if (i.id === itemId) {
-                  return { ...i, quantityOnHand: Math.max(0, (i.quantityOnHand || 0) - quantity) };
+                  const ni = { ...i, quantityOnHand: Math.max(0, (i.quantityOnHand || 0) - quantity) };
+                  pushToCloud('inventory', ni);
+                  return ni;
               }
               return i;
           });
@@ -550,6 +585,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
          persist('erp_inventory', updated);
          return updated;
       });
+      items.forEach(i => pushToCloud('inventory', i));
   };
 
   const addService = (service: Service) => {
