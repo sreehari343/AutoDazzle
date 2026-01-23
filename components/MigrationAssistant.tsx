@@ -7,14 +7,14 @@ import {
   Download, ShieldCheck, Server, Lock, RefreshCcw, Trash2, Cloud, 
   Wifi, Smartphone, Laptop, Image as ImageIcon, Building, Key, 
   ShieldAlert, Copy, CheckCircle2, AlertCircle, Sparkles, X, Info,
-  ArrowRightLeft
+  ArrowRightLeft, Code, HardDriveUpload
 } from 'lucide-react';
 
 export const MigrationAssistant: React.FC = () => {
   const { 
     customers, jobs, transactions, staff, inventory, accounts, 
-    restoreData, resetToFactory, connectToCloud, isCloudConnected, syncStatus,
-    logoUrl, updateLogo, currentUserRole, updatePassword, bulkAddTransactions
+    restoreData, resetToFactory, connectToCloud, isCloudConnected, syncStatus, lastSyncError,
+    logoUrl, updateLogo, currentUserRole, updatePassword, bulkAddTransactions, syncAllLocalToCloud
   } = useERP();
   
   const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('PROFILE');
@@ -34,11 +34,19 @@ export const MigrationAssistant: React.FC = () => {
   const [cloudUrl, setCloudUrl] = useState(localStorage.getItem('supabase_url') || '');
   const [cloudKey, setCloudKey] = useState(localStorage.getItem('supabase_key') || '');
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
 
   const handleConnect = async () => {
       setIsConnecting(true);
       await connectToCloud(cloudUrl, cloudKey);
       setIsConnecting(false);
+  };
+
+  const handleForceSync = async () => {
+      if (!isCloudConnected) return;
+      setIsSyncingAll(true);
+      await syncAllLocalToCloud();
+      setIsSyncingAll(false);
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -104,6 +112,16 @@ export const MigrationAssistant: React.FC = () => {
       const tpl = "2024-11-01, INCOME, Service Sales, 5000, Daily Sales, CASH\n2024-11-02, EXPENSE, Rent, 15000, Shop Rent Nov, TRANSFER";
       navigator.clipboard.writeText(tpl);
       alert("Template copied to clipboard!");
+  };
+
+  const copySupabaseSql = () => {
+      const sql = `-- AUTO DAZZLE ERP SCHEMA
+CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, address TEXT, lifetime_value NUMERIC DEFAULT 0, joined_date DATE DEFAULT CURRENT_DATE, visits INTEGER DEFAULT 0, is_premium BOOLEAN DEFAULT FALSE, vehicles JSONB DEFAULT '[]'::jsonb);
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id), segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC, tax NUMERIC, notes TEXT, payment_status TEXT);
+CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
+CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC, method TEXT, description TEXT, reference_id TEXT);`;
+      navigator.clipboard.writeText(sql);
+      alert("SQL Schema copied! Paste this into Supabase SQL Editor.");
   };
 
   const handleFullSystemBackup = () => {
@@ -260,13 +278,13 @@ export const MigrationAssistant: React.FC = () => {
                                 type="password" 
                                 value={cloudKey}
                                 onChange={e => setCloudKey(e.target.value)}
-                                placeholder="supabase-anon-key"
+                                placeholder="service-role-secret-key"
                                 className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50"
                             />
                         </div>
                     </div>
 
-                    <div className="mt-8 flex items-center gap-6">
+                    <div className="mt-8 flex flex-wrap items-center gap-6">
                         <button 
                             onClick={handleConnect}
                             disabled={isConnecting}
@@ -279,11 +297,68 @@ export const MigrationAssistant: React.FC = () => {
                         <div className="flex items-center gap-3">
                             <div className={`w-3 h-3 rounded-full ${isCloudConnected ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`}></div>
                             <span className="text-[10px] font-black text-white uppercase tracking-widest">
-                                Status: {isCloudConnected ? 'CONNECTED' : 'LOCAL ONLY'}
+                                Status: {isCloudConnected ? 'CONNECTED' : 'OFFLINE'}
                             </span>
                         </div>
+                        
+                        {syncStatus === 'SYNCING' && (
+                            <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-600/20 border border-blue-500/30 rounded text-blue-400 text-[10px] font-black uppercase tracking-widest animate-pulse">
+                                <RefreshCcw size={10} className="animate-spin"/> Syncing Global State...
+                            </div>
+                        )}
+                    </div>
+
+                    {lastSyncError && (
+                        <div className="mt-6 p-4 bg-red-950/30 border border-red-900/50 rounded-lg flex gap-3 max-w-4xl">
+                            <AlertTriangle className="text-red-500 shrink-0" size={18} />
+                            <div>
+                                <p className="text-xs font-black text-red-400 uppercase tracking-widest">Connection Diagnostics</p>
+                                <p className="text-[11px] text-red-200 mt-1 font-mono">{lastSyncError}</p>
+                                <p className="text-[10px] text-slate-500 mt-2 italic font-medium uppercase tracking-tight">Solution: Ensure you have run the SQL Schema in your Supabase SQL Editor and enabled Row-Level Security policies or used the 'service_role' key.</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+             </div>
+
+             {isCloudConnected && (
+                <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-lg flex flex-col md:flex-row items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-emerald-100 text-emerald-700 rounded-lg">
+                            <HardDriveUpload size={24} />
+                        </div>
+                        <div>
+                            <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Populate Cloud Database</h4>
+                            <p className="text-xs text-emerald-700 font-medium max-w-md">Push all current local records (Customers, Jobs, Staff, Transactions) to the Supabase database. Use this for initial setup.</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={handleForceSync}
+                        disabled={isSyncingAll}
+                        className="px-8 py-3 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 transition-all flex items-center gap-2 disabled:bg-slate-400"
+                    >
+                        {isSyncingAll ? <Loader2 className="animate-spin" size={14}/> : <RefreshCcw size={14}/>}
+                        Push Local to Cloud
+                    </button>
+                </div>
+             )}
+
+             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+                        <Code size={24} />
+                    </div>
+                    <div>
+                        <h4 className="font-black text-slate-800 uppercase text-[10px] tracking-widest">Database Initialization</h4>
+                        <p className="text-xs text-slate-500 font-medium">Copy the required SQL schema to set up your Supabase project.</p>
                     </div>
                 </div>
+                <button 
+                    onClick={copySupabaseSql}
+                    className="px-6 py-2 bg-slate-100 text-slate-700 rounded-md text-[10px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-2"
+                >
+                    <Copy size={12} /> Copy Schema SQL
+                </button>
              </div>
          </div>
       )}
