@@ -37,7 +37,6 @@ export const MigrationAssistant: React.FC = () => {
   // File Import State
   const [importLoading, setImportLoading] = useState(false);
 
-  // Added handleFullSystemBackup to fix Error on line 324
   const handleFullSystemBackup = () => {
     const backupData = {
       version: '2.2',
@@ -65,7 +64,6 @@ export const MigrationAssistant: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Added handleRestore to fix Error on line 330
   const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -83,7 +81,7 @@ export const MigrationAssistant: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    e.target.value = ''; // Reset input
+    e.target.value = ''; 
   };
 
   const handleConnect = async () => {
@@ -139,7 +137,7 @@ export const MigrationAssistant: React.FC = () => {
           reader.onload = (e) => {
               const text = e.target?.result as string;
               const rows = text.split('\n').map(row => {
-                  // Basic CSV parser that handles quoted strings with commas
+                  // Basic CSV parser that handles quoted strings with commas (Excel standard)
                   const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
                   if (matches) return matches.map(m => m.replace(/^"|"$/g, '').trim());
                   return row.split(',').map(cell => cell.trim().replace(/^"|"$/g, ''));
@@ -151,8 +149,10 @@ export const MigrationAssistant: React.FC = () => {
   };
 
   const cleanNum = (val: string) => {
-      if (!val || val === '-' || val === '#ERROR!') return 0;
-      return parseFloat(val.replace(/[^0-9.-]+/g, '')) || 0;
+      if (!val || val === '-' || val === '#ERROR!' || val.trim() === '') return 0;
+      // Remove currency symbols and commas
+      const cleaned = val.replace(/[^0-9.-]+/g, '');
+      return parseFloat(cleaned) || 0;
   };
 
   const handleMassImport = async (e: React.ChangeEvent<HTMLInputElement>, type: 'TX' | 'PO') => {
@@ -161,27 +161,29 @@ export const MigrationAssistant: React.FC = () => {
 
       setImportLoading(true);
       const allRows = await parseCsvFile(file);
-      // Skip header if it contains "Date" or "Account"
+      
+      // Determine if there is a header row (User's format has 'Date', 'Account Name', etc.)
       const dataRows = (allRows[0][0].toLowerCase().includes('date') || allRows[0][1].toLowerCase().includes('account')) 
         ? allRows.slice(1) 
         : allRows;
       
       try {
           if (type === 'TX') {
-              // Expected user format (8 columns):
+              // Expected User spreadsheet format (8 columns):
               // [0]Date, [1]AccountName, [2]AccountType, [3]AdjType, [4]Debit, [5]Credit, [6]Balance, [7]Description
               const newTxs: Transaction[] = [];
               
               dataRows.forEach((row, idx) => {
                   const date = row[0] || new Date().toISOString().split('T')[0];
-                  const accName = row[1] || 'General';
+                  const accName = row[1] || 'General Ledger';
                   const debit = cleanNum(row[4]);
                   const credit = cleanNum(row[5]);
-                  const desc = row[7] || row[1] || 'Imported Record';
+                  const desc = row[7] || row[1] || 'Imported Entry';
 
+                  // Map Debit to Expense and Credit to Income (Standard Ledger Entry logic)
                   if (debit > 0) {
                       newTxs.push({
-                          id: `tx-import-dr-${Date.now()}-${idx}`,
+                          id: `tx-imp-dr-${Date.now()}-${idx}`,
                           date,
                           type: 'EXPENSE',
                           category: accName,
@@ -192,7 +194,7 @@ export const MigrationAssistant: React.FC = () => {
                   }
                   if (credit > 0) {
                       newTxs.push({
-                          id: `tx-import-cr-${Date.now()}-${idx}`,
+                          id: `tx-imp-cr-${Date.now()}-${idx}`,
                           date,
                           type: 'INCOME',
                           category: accName,
@@ -203,12 +205,12 @@ export const MigrationAssistant: React.FC = () => {
                   }
               });
               
-              if (window.confirm(`Detected ${newTxs.length} accounting entries from your ledger. Import now?`)) {
+              if (window.confirm(`Found ${newTxs.length} entries matching your spreadsheet format. Import now?`)) {
                   bulkAddTransactions(newTxs);
-                  alert(`Success! Imported ${newTxs.length} historical financial records.`);
+                  alert(`Successfully imported ${newTxs.length} historical records into the General Ledger!`);
               }
           } else {
-              // Purchase Import Format: Date, DocNum, Vendor, Item, Qty, Unit, Rate, Category
+              // Purchase Import Format (standard 8 columns): Date, DocNum, Vendor, Item, Qty, Unit, Rate, Category
               const newPos: PurchaseOrder[] = dataRows.map((row, idx) => {
                   const qty = cleanNum(row[4]) || 1;
                   const rate = cleanNum(row[6]) || 0;
@@ -234,7 +236,7 @@ export const MigrationAssistant: React.FC = () => {
           }
       } catch (err) {
           console.error(err);
-          alert("Import Error: Ensure the CSV columns match the required sequence.");
+          alert("Import Error: Ensure the CSV columns match your spreadsheet's sequence.");
       } finally {
           setImportLoading(false);
           e.target.value = ''; 
@@ -264,7 +266,7 @@ CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, date DATE DEFAULT CUR
 -- 7. SERVICE MENU
 CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, duration_minutes INTEGER, base_price NUMERIC, prices JSONB);`;
       navigator.clipboard.writeText(sql);
-      alert("Full SQL Schema v2.2 copied! Paste this into Supabase SQL Editor.");
+      alert("Full SQL Schema v2.2 copied! Paste this into Supabase SQL Editor to support the new Services sync.");
   };
 
   return (
