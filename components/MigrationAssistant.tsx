@@ -93,19 +93,21 @@ export const MigrationAssistant: React.FC = () => {
 
   const cleanNum = (val: string) => {
       if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
-      
-      // Detect Scientific Notation (e.g. 1.23E+11) which usually represents error/total columns
       if (/[eE][+-]?\d+/.test(val)) return 0;
-
-      // Clean the string to only allow numbers and decimal point
       const cleaned = val.replace(/[^0-9.-]+/g, '');
       const parsed = parseFloat(cleaned);
-      
-      // SAFETY CAP: Ignore any transaction amount over 10 Lakhs (likely a Grand Total row)
-      if (isFinite(parsed) && Math.abs(parsed) < 1000000) {
-          return parsed;
-      }
+      if (isFinite(parsed) && Math.abs(parsed) < 1000000) return parsed;
       return 0;
+  };
+
+  // NEW: Removes BOM and non-printable control characters that cause "unknown characters"
+  const cleanStr = (str: string) => {
+      if (!str) return '';
+      return str
+        .replace(/^\uFEFF/, '') // Remove UTF-8 BOM
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove non-printable ASCII
+        .replace(/^"|"$/g, '') // Remove surrounding quotes
+        .trim();
   };
 
   const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,69 +117,54 @@ export const MigrationAssistant: React.FC = () => {
 
       const reader = new FileReader();
       reader.onload = async (event) => {
-          const text = event.target?.result as string;
-          const rows = text.split('\n').filter(r => r.trim()).map(row => {
-              const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-              return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
+          let text = event.target?.result as string;
+          
+          // Split rows and use a robust regex for CSV that handles commas inside quotes
+          const rows = text.split(/\r?\n/).filter(r => r.trim()).map(line => {
+              const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+              return matches ? matches.map(m => cleanStr(m)) : line.split(',').map(c => cleanStr(c));
           });
 
-          // AGGRESSIVE ROW FILTERING
           const dataRows = rows.filter(row => {
-             if (row.length < 5) return false;
+             if (row.length < 4) return false;
              const fullRowText = row.join(' ').toLowerCase();
-             
-             // Ignore headers and footer summary rows
              const isHeader = fullRowText.includes('acc') || fullRowText.includes('date');
              const isSummary = fullRowText.includes('total') || 
                                fullRowText.includes('balance') || 
                                fullRowText.includes('summary') || 
                                fullRowText.includes('b/f') || 
-                               fullRowText.includes('c/f') ||
-                               fullRowText.includes('brought forward');
-                               
-             return !isHeader && !isSummary && row[1]; // Row 1 must have an Account Name
+                               fullRowText.includes('c/f');
+             return !isHeader && !isSummary && row[1];
           });
           
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
-              // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
+              // SEQUENCE: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
               const date = row[0] || new Date().toISOString().split('T')[0];
               const accName = row[1] || 'Imported Entry';
               const debit = cleanNum(row[3]);
               const credit = cleanNum(row[4]);
               const desc = row[5] || accName;
 
-              // Process Debit (Expense)
               if (debit > 0) {
                   newTxs.push({ 
                       id: `imp-dr-${Date.now()}-${idx}`, 
-                      date, 
-                      type: 'EXPENSE', 
-                      category: accName, 
-                      amount: debit, 
-                      description: desc, 
-                      method: 'TRANSFER' 
+                      date, type: 'EXPENSE', category: accName, amount: debit, description: desc, method: 'TRANSFER' 
                   });
               }
-              // Process Credit (Income)
               if (credit > 0) {
                   newTxs.push({ 
                       id: `imp-cr-${Date.now()}-${idx}`, 
-                      date, 
-                      type: 'INCOME', 
-                      category: accName, 
-                      amount: credit, 
-                      description: desc, 
-                      method: 'TRANSFER' 
+                      date, type: 'INCOME', category: accName, amount: credit, description: desc, method: 'TRANSFER' 
                   });
               }
           });
 
           if (newTxs.length === 0) {
-              alert("Import Shield Blocked: No valid transactions found. Total rows or amounts over 10 Lakhs were ignored for safety.");
-          } else if (window.confirm(`Successfully filtered data. ${newTxs.length} legitimate transactions found. (Total/Balance rows were removed). Proceed?`)) {
+              alert("No valid data found. Check Column 4 (Debit) and 5 (Credit).");
+          } else if (window.confirm(`Found ${newTxs.length} clean records. Import into Ledgers?`)) {
               bulkAddTransactions(newTxs);
-              alert(`Import Complete. Your balance is now based on ${newTxs.length} filtered records.`);
+              alert(`Import Success! ${newTxs.length} records processed.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -299,7 +286,7 @@ export const MigrationAssistant: React.FC = () => {
                     <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
                         <p className="text-[10px] font-black text-slate-400 uppercase mb-1">STRICT COLUMN SEQUENCE (6 COLS):</p>
                         <p className="text-[9px] font-mono text-slate-600 leading-tight">Date, Acc Name, Acc Type, Debit, Credit, Description</p>
-                        <p className="text-[9px] font-bold text-red-500 mt-2 uppercase">Safety Active: Total rows and amounts &gt; 10L are auto-ignored.</p>
+                        <p className="text-[9px] font-bold text-blue-600 mt-2 uppercase">Shield Active: Strip non-printable characters & hidden BOM marks.</p>
                     </div>
                 </div>
             </div>
