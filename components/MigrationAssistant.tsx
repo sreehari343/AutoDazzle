@@ -4,8 +4,7 @@ import { AIAnalysisResult, Transaction } from '../types.ts';
 import { useERP } from '../contexts/ERPContext.tsx';
 import { 
   Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
-  Wifi, ImageIcon, Copy, Sparkles, X, Code, HardDriveUpload, 
-  FileSpreadsheet, FileJson, Landmark
+  Wifi, ImageIcon, Copy, Sparkles, X, Code, Landmark, AlertCircle
 } from 'lucide-react';
 
 export const MigrationAssistant: React.FC = () => {
@@ -16,7 +15,7 @@ export const MigrationAssistant: React.FC = () => {
     payrollHistory
   } = useERP();
   
-  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('PROFILE');
+  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('MIGRATION');
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AIAnalysisResult | null>(null);
@@ -94,7 +93,8 @@ export const MigrationAssistant: React.FC = () => {
 
   const cleanNum = (val: string) => {
       if (!val || val === '-' || val === '#ERROR!' || val.trim() === '') return 0;
-      return parseFloat(val.replace(/[^0-9.-]+/g, '')) || 0;
+      const cleaned = val.replace(/[^0-9.-]+/g, '');
+      return parseFloat(cleaned) || 0;
   };
 
   const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,29 +110,51 @@ export const MigrationAssistant: React.FC = () => {
               return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
           });
 
-          // Skip header if it contains keywords
-          const dataRows = (rows[0][0].toLowerCase().includes('date') || rows[0][1].toLowerCase().includes('account')) ? rows.slice(1) : rows;
+          // Filter header row (Date, Acc Name, etc)
+          const dataRows = (rows[0][0].toLowerCase().includes('date') || rows[0][1].toLowerCase().includes('acc')) ? rows.slice(1) : rows;
           
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
-              // Expected 8 Cols: [0]Date, [1]AccName, [2]Type, [3]Adj, [4]Debit, [5]Credit, [6]Bal, [7]Desc
+              // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
+              if (row.length < 5) return; 
+
               const date = row[0] || new Date().toISOString().split('T')[0];
               const accName = row[1] || 'Imported Entry';
-              const debit = cleanNum(row[4]);
-              const credit = cleanNum(row[5]);
-              const desc = row[7] || accName;
+              const debit = cleanNum(row[3]);
+              const credit = cleanNum(row[4]);
+              const desc = row[5] || accName;
 
+              // Debit column (Index 3) = Expense
               if (debit > 0) {
-                  newTxs.push({ id: `imp-dr-${Date.now()}-${idx}`, date, type: 'EXPENSE', category: accName, amount: debit, description: desc, method: 'TRANSFER' });
+                  newTxs.push({ 
+                      id: `imp-dr-${Date.now()}-${idx}`, 
+                      date, 
+                      type: 'EXPENSE', 
+                      category: accName, 
+                      amount: debit, 
+                      description: desc, 
+                      method: 'TRANSFER' 
+                  });
               }
+              // Credit column (Index 4) = Income
               if (credit > 0) {
-                  newTxs.push({ id: `imp-cr-${Date.now()}-${idx}`, date, type: 'INCOME', category: accName, amount: credit, description: desc, method: 'TRANSFER' });
+                  newTxs.push({ 
+                      id: `imp-cr-${Date.now()}-${idx}`, 
+                      date, 
+                      type: 'INCOME', 
+                      category: accName, 
+                      amount: credit, 
+                      description: desc, 
+                      method: 'TRANSFER' 
+                  });
               }
           });
 
-          if (window.confirm(`Import ${newTxs.length} records from ledger?`)) {
+          if (newTxs.length === 0) {
+              alert("Import failed: No valid numerical data found in Debit/Credit columns.");
+          } else if (window.confirm(`Found ${newTxs.length} records. These will be mapped to the 6-column ledger format. Proceed?`)) {
               bulkAddTransactions(newTxs);
-              alert(`Successfully imported ${newTxs.length} financial entries.`);
+              alert(`Successfully imported ${newTxs.length} ledger entries.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -150,7 +172,7 @@ CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, sku TEXT, name TEXT, 
 CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, doc_number TEXT, vendor_name TEXT, item_name TEXT, quantity NUMERIC, unit TEXT, rate NUMERIC, amount NUMERIC, status TEXT, category TEXT);
 CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, duration_minutes INTEGER, base_price NUMERIC, prices JSONB);`;
       navigator.clipboard.writeText(sql);
-      alert("SQL Schema copied! Paste into Supabase SQL Editor.");
+      alert("SQL Schema copied!");
   };
 
   return (
@@ -158,7 +180,7 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
       <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
         <div>
             <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">System Control</h2>
-            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Setup & Migration</p>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Master Settings</p>
         </div>
         <div className="flex gap-2">
              <button onClick={() => setActiveTab('PROFILE')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'PROFILE' ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Security</button>
@@ -169,9 +191,9 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
       </div>
 
       {activeTab === 'PROFILE' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-black">
             <div className="md:col-span-1 bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex flex-col items-center">
-                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 w-full text-left tracking-widest">Brand Logo</h4>
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 w-full text-left tracking-widest">Business Logo</h4>
                 <div className="w-32 h-32 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden mb-6 bg-slate-50 group relative">
                     {logoUrl ? <img src={logoUrl} alt="Logo" className="max-w-full max-h-full object-contain" /> : <ImageIcon size={32} className="text-slate-300" />}
                 </div>
@@ -186,15 +208,15 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
                     <form onSubmit={handleUpdatePasswords} className="space-y-6">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2">
-                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Master Admin Passcode</label>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Master Admin Password</label>
                                 <input type="password" value={passSuper} onChange={e => setPassSuper(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-600/20" />
                             </div>
                             <div className="space-y-2">
-                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Staff Portal Passcode</label>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Staff Portal Password</label>
                                 <input type="password" value={passStaff} onChange={e => setPassStaff(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-600/20" />
                             </div>
                         </div>
-                        <button type="submit" className="px-8 py-3 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-700 shadow-lg">Save Credentials</button>
+                        <button type="submit" className="px-8 py-3 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-700 shadow-lg transition-all">Save Passwords</button>
                     </form>
                 </div>
             </div>
@@ -203,9 +225,9 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
 
       {activeTab === 'CLOUD' && (
          <div className="space-y-6">
-             <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-8 rounded-xl border border-slate-700 shadow-2xl">
+             <div className="bg-slate-900 p-8 rounded-xl border border-slate-700 shadow-2xl">
                 <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Cloud Engine</h4>
-                <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.3em] mb-8">PostgreSQL / Supabase Sync</p>
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.3em] mb-8">External Supabase Connection</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
                     <input type="text" value={cloudUrl} onChange={e => setCloudUrl(e.target.value)} placeholder="Supabase URL" className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
                     <input type="password" value={cloudKey} onChange={e => setCloudKey(e.target.value)} placeholder="Service Role Key" className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
@@ -214,73 +236,68 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
                     <button onClick={handleConnect} disabled={isConnecting} className="px-10 py-4 bg-red-600 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-red-700 shadow-xl flex items-center gap-3 disabled:bg-slate-700">
                         {isConnecting ? <Loader2 className="animate-spin" size={16} /> : <Wifi size={16} />} Establish Cloud Link
                     </button>
-                    <span className="text-[10px] font-black text-white uppercase tracking-widest">Status: {isCloudConnected ? 'CONNECTED' : 'OFFLINE'}</span>
+                    <span className="text-[10px] font-black text-white uppercase tracking-widest">Status: {isCloudConnected ? 'STABLE' : 'OFFLINE'}</span>
                 </div>
              </div>
              {isCloudConnected && (
                 <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-lg flex items-center justify-between">
                     <div>
-                        <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Push Local to Cloud</h4>
-                        <p className="text-xs text-emerald-700 font-medium max-w-md">Update cloud database with all local records.</p>
+                        <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Full Sync Process</h4>
+                        <p className="text-xs text-emerald-700 font-medium">Updates cloud with all current ledger modules.</p>
                     </div>
                     <button onClick={handleForceSync} disabled={isSyncingAll} className="px-8 py-3 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 shadow-lg flex items-center gap-2">
-                        {isSyncingAll ? <Loader2 className="animate-spin" size={14}/> : <RefreshCcw size={14}/>} Sync All Data
+                        {isSyncingAll ? <Loader2 className="animate-spin" size={14}/> : <RefreshCcw size={14}/>} Sync Data Now
                     </button>
                 </div>
              )}
-             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg"><Code size={24} /></div>
-                    <h4 className="font-black text-slate-800 uppercase text-[10px] tracking-widest">SQL Schema v2.2</h4>
-                </div>
-                <button onClick={copySupabaseSql} className="px-6 py-2 bg-slate-100 text-slate-700 rounded-md text-[10px] font-black uppercase hover:bg-slate-200 flex items-center gap-2"><Copy size={12} /> Copy SQL</button>
-             </div>
          </div>
       )}
 
       {activeTab === 'BACKUP' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-black">
             <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
-                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6 mx-auto"><FileJson size={32} /></div>
-                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Export JSON</h4>
-                <button onClick={handleFullSystemBackup} className="w-full py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-black shadow-lg">Generate Backup</button>
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6 mx-auto"><Landmark size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Export Local Data</h4>
+                <button onClick={handleFullSystemBackup} className="w-full py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-black shadow-lg">Download .JSON</button>
             </div>
             <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
                 <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-6 mx-auto"><RefreshCcw size={32} /></div>
-                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Restore System</h4>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Restore Backup</h4>
                 <label className="w-full">
                     <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
-                    <div className="w-full py-4 bg-white border-2 border-slate-900 text-slate-900 rounded-lg font-black uppercase text-xs tracking-widest text-center cursor-pointer hover:bg-slate-50 transition-all">Upload & Restore</div>
+                    <div className="w-full py-4 bg-white border-2 border-slate-900 text-slate-900 rounded-lg font-black uppercase text-xs tracking-widest text-center cursor-pointer hover:bg-slate-50 transition-all">Upload File</div>
                 </label>
             </div>
         </div>
       )}
 
       {activeTab === 'MIGRATION' && (
-        <div className="space-y-6">
+        <div className="space-y-6 text-black">
             <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
                 <div className="flex items-center gap-3 mb-6">
                     <Landmark className="text-indigo-600" size={28}/>
-                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Master Financial Importer</h4>
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Master Ledger Importer</h4>
                 </div>
-                <p className="text-sm text-indigo-700 mb-8 max-w-2xl font-medium">Select your 8-column accounting spreadsheet (Excel/CSV). This system automatically detects Income and Expenses based on Debit/Credit columns.</p>
                 
-                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm relative group max-w-lg">
-                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest">Account Ledger (Full Sequence)</h5>
-                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50">
+                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm max-w-lg">
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> Financial CSV Importer</h5>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
                         {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
-                        <span className="text-sm font-bold text-indigo-800">Select Financial CSV</span>
+                        <span className="text-sm font-bold text-indigo-800">Select Financial Ledger</span>
                         <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
                     </label>
-                    <p className="text-[9px] text-slate-400 mt-4 font-mono leading-tight bg-slate-50 p-2 rounded">Format: Date, Acc Name, Acc Type, Adj Type, Debit, Credit, Balance, Desc</p>
+                    <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
+                        <p className="text-[10px] font-black text-slate-400 uppercase mb-1">STRICT COLUMN SEQUENCE (6 COLS):</p>
+                        <p className="text-[9px] font-mono text-slate-600 leading-tight">Date, Acc Name, Acc Type, Debit, Credit, Description</p>
+                    </div>
                 </div>
             </div>
 
             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Sparkles size={14} className="text-amber-500"/> AI Schema Generator</h4>
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Sparkles size={14} className="text-amber-500"/> AI Data Mapper</h4>
                 <div className="space-y-4">
-                    <p className="text-xs text-slate-600 font-medium">Paste custom data snippets here for Gemini AI to generate a direct SQL migration query.</p>
-                    <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Paste any legacy data rows here..." className="w-full h-40 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-500/20" />
+                    <p className="text-xs text-slate-600 font-medium">Paste custom data rows here for AI to generate a SQL schema mapping.</p>
+                    <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Paste custom CSV rows..." className="w-full h-40 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-500/20" />
                     <div className="flex justify-end">
                         <button onClick={() => {
                             if (!inputText.trim()) return;
@@ -294,8 +311,14 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
             </div>
             {result && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
-                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800"><pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap">{result.proposedSchema}</pre></div>
-                    <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm h-[300px] overflow-y-auto"><div className="text-xs text-slate-600 whitespace-pre-wrap">{result.migrationPlan}</div></div>
+                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800 shadow-xl overflow-hidden">
+                        <h5 className="text-amber-500 font-black text-[10px] uppercase mb-4 tracking-widest">Proposed Schema</h5>
+                        <pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap overflow-y-auto max-h-60">{result.proposedSchema}</pre>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                         <h5 className="text-slate-800 font-black text-[10px] uppercase mb-4 tracking-widest">Migration Plan</h5>
+                         <div className="text-xs text-slate-600 whitespace-pre-wrap overflow-y-auto">{result.migrationPlan}</div>
+                    </div>
                 </div>
             )}
         </div>
