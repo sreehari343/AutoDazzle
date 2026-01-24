@@ -1,188 +1,304 @@
 import React, { useState } from 'react';
+import { analyzeDataStructure } from '../services/geminiService.ts';
+import { AIAnalysisResult, Transaction } from '../types.ts';
 import { useERP } from '../contexts/ERPContext.tsx';
-import { X, Plus, Upload, Trash2, Edit, Search, FileSpreadsheet, Copy, Car, Table } from 'lucide-react';
-import { Service } from '../types.ts';
+import { 
+  Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
+  Wifi, ImageIcon, Copy, Sparkles, X, Code, HardDriveUpload, 
+  FileSpreadsheet, FileJson, Landmark
+} from 'lucide-react';
 
-export const Operations: React.FC = () => {
-  const { services, addService, updateService, deleteService, bulkAddServices, currentUserRole } = useERP();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [importText, setImportText] = useState('');
+export const MigrationAssistant: React.FC = () => {
+  const { 
+    customers, jobs, transactions, staff, inventory, accounts, purchases, services,
+    restoreData, connectToCloud, isCloudConnected, 
+    logoUrl, updateLogo, updatePassword, bulkAddTransactions, syncAllLocalToCloud,
+    payrollHistory
+  } = useERP();
   
-  const canEdit = currentUserRole !== 'STAFF';
+  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('PROFILE');
+  const [inputText, setInputText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<AIAnalysisResult | null>(null);
 
-  const initialFormState = {
-    sku: '', name: '', category: 'WASHING' as Service['category'], duration: 30,
-    price_HATCHBACK: 0, price_SEDAN: 0, price_SUV_MUV: 0, price_LUXURY: 0,
-    price_AUTORICKSHAW: 0, price_AUTOTAXI: 0, price_BIKE: 0, price_SCOOTY: 0, price_BULLET: 0,
-    price_PICKUP_SMALL: 0, price_PICKUP_LARGE: 0
-  };
+  const [passSuper, setPassSuper] = useState('');
+  const [passStaff, setPassStaff] = useState('');
 
-  const [formData, setFormData] = useState(initialFormState);
+  const [cloudUrl, setCloudUrl] = useState(localStorage.getItem('supabase_url') || '');
+  const [cloudKey, setCloudKey] = useState(localStorage.getItem('supabase_key') || '');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
 
-  const filteredServices = services.filter(s => 
-      s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      s.sku.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const handleOpenAdd = () => {
-    if (!canEdit) return;
-    setEditingId(null); setFormData(initialFormState); setIsModalOpen(true);
-  };
-
-  const handleOpenEdit = (service: Service) => {
-    if (!canEdit) return;
-    setEditingId(service.id);
-    setFormData({
-      sku: service.sku, name: service.name, category: service.category, duration: service.durationMinutes,
-      price_HATCHBACK: service.prices.HATCHBACK || 0,
-      price_SEDAN: service.prices.SEDAN || 0,
-      price_SUV_MUV: service.prices.SUV_MUV || 0,
-      price_LUXURY: service.prices.LUXURY || 0,
-      price_AUTORICKSHAW: service.prices.AUTORICKSHAW || 0,
-      price_AUTOTAXI: service.prices.AUTOTAXI || 0,
-      price_BIKE: service.prices.BIKE || 0,
-      price_SCOOTY: service.prices.SCOOTY || 0,
-      price_BULLET: service.prices.BULLET || 0,
-      price_PICKUP_SMALL: service.prices.PICKUP_SMALL || 0,
-      price_PICKUP_LARGE: service.prices.PICKUP_LARGE || 0,
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleDelete = (id: string) => {
-    if (!canEdit) return;
-    if (window.confirm("Delete this service?")) deleteService(id);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const servicePayload: Service = {
-      id: editingId || `s-${Date.now()}`,
-      sku: formData.sku || `SVC-${services.length + 1}`,
-      name: formData.name,
-      basePrice: formData.price_HATCHBACK, 
-      prices: {
-        HATCHBACK: formData.price_HATCHBACK, SEDAN: formData.price_SEDAN, SUV_MUV: formData.price_SUV_MUV, LUXURY: formData.price_LUXURY,
-        AUTORICKSHAW: formData.price_AUTORICKSHAW, AUTOTAXI: formData.price_AUTOTAXI, BIKE: formData.price_BIKE, SCOOTY: formData.price_SCOOTY,
-        BULLET: formData.price_BULLET, PICKUP_SMALL: formData.price_PICKUP_SMALL, PICKUP_LARGE: formData.price_PICKUP_LARGE,
-      },
-      durationMinutes: formData.duration, category: formData.category
+  const handleFullSystemBackup = () => {
+    const backupData = {
+      version: '2.2',
+      timestamp: new Date().toISOString(),
+      modules: { customers, jobs, transactions, staff, inventory, services, financials: accounts, payrollHistory, purchases }
     };
-    editingId ? updateService(servicePayload) : addService(servicePayload);
-    setIsModalOpen(false);
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `auto_dazzle_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
   };
 
-  const handleBulkImport = () => {
-    const lines = importText.split('\n').filter(l => l.trim());
-    const imported: Service[] = lines.map((line, idx) => {
-      const p = line.split(',').map(s => s.trim());
-      // Expecting: Name, Hatch, Sedan, SUV, Premium
-      return {
-          id: `si-${Date.now()}-${idx}`,
-          sku: `SVC-${Math.floor(1000 + Math.random() * 9000)}`,
-          name: p[0],
-          category: 'WASHING',
-          basePrice: parseFloat(p[1]) || 0,
-          durationMinutes: 30,
-          prices: {
-              HATCHBACK: parseFloat(p[1]) || 0,
-              SEDAN: parseFloat(p[2]) || 0,
-              SUV_MUV: parseFloat(p[3]) || 0,
-              LUXURY: parseFloat(p[4]) || 0,
-              BIKE: 0, SCOOTY: 0, BULLET: 0, AUTORICKSHAW: 0, AUTOTAXI: 0, PICKUP_SMALL: 0, PICKUP_LARGE: 0
+  const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (window.confirm("Restore will overwrite current local data. Proceed?")) {
+           restoreData(data);
+        }
+      } catch (err) {
+        alert("Invalid backup file.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
+  };
+
+  const handleConnect = async () => {
+      setIsConnecting(true);
+      await connectToCloud(cloudUrl, cloudKey);
+      setIsConnecting(false);
+  };
+
+  const handleForceSync = async () => {
+      if (!isCloudConnected) return;
+      setIsSyncingAll(true);
+      await syncAllLocalToCloud();
+      setIsSyncingAll(false);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => updateLogo(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUpdatePasswords = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passSuper) updatePassword('SUPER_ADMIN', passSuper);
+    if (passStaff) updatePassword('STAFF', passStaff);
+    setPassSuper(''); setPassStaff('');
+    alert('✅ Credentials Updated!');
+  };
+
+  const cleanNum = (val: string) => {
+      if (!val || val === '-' || val === '#ERROR!' || val.trim() === '') return 0;
+      return parseFloat(val.replace(/[^0-9.-]+/g, '')) || 0;
+  };
+
+  const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setImportLoading(true);
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          const text = event.target?.result as string;
+          const rows = text.split('\n').filter(r => r.trim()).map(row => {
+              const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+              return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
+          });
+
+          // Skip header if it contains keywords
+          const dataRows = (rows[0][0].toLowerCase().includes('date') || rows[0][1].toLowerCase().includes('account')) ? rows.slice(1) : rows;
+          
+          const newTxs: Transaction[] = [];
+          dataRows.forEach((row, idx) => {
+              // Expected 8 Cols: [0]Date, [1]AccName, [2]Type, [3]Adj, [4]Debit, [5]Credit, [6]Bal, [7]Desc
+              const date = row[0] || new Date().toISOString().split('T')[0];
+              const accName = row[1] || 'Imported Entry';
+              const debit = cleanNum(row[4]);
+              const credit = cleanNum(row[5]);
+              const desc = row[7] || accName;
+
+              if (debit > 0) {
+                  newTxs.push({ id: `imp-dr-${Date.now()}-${idx}`, date, type: 'EXPENSE', category: accName, amount: debit, description: desc, method: 'TRANSFER' });
+              }
+              if (credit > 0) {
+                  newTxs.push({ id: `imp-cr-${Date.now()}-${idx}`, date, type: 'INCOME', category: accName, amount: credit, description: desc, method: 'TRANSFER' });
+              }
+          });
+
+          if (window.confirm(`Import ${newTxs.length} records from ledger?`)) {
+              bulkAddTransactions(newTxs);
+              alert(`Successfully imported ${newTxs.length} financial entries.`);
           }
+          setImportLoading(false);
+          e.target.value = '';
       };
-    });
-    bulkAddServices(imported);
-    setIsImportOpen(false);
-    setImportText('');
-    alert(`Imported ${imported.length} services!`);
+      reader.readAsText(file);
+  };
+
+  const copySupabaseSql = () => {
+      const sql = `-- AUTO DAZZLE ERP SCHEMA v2.2
+CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, address TEXT, lifetime_value NUMERIC DEFAULT 0, joined_date DATE DEFAULT CURRENT_DATE, visits INTEGER DEFAULT 0, is_premium BOOLEAN DEFAULT FALSE, vehicles JSONB DEFAULT '[]'::jsonb);
+CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC DEFAULT 0, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL, segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC DEFAULT 0, tax NUMERIC DEFAULT 0, notes TEXT, payment_status TEXT);
+CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC DEFAULT 0, method TEXT, description TEXT, reference_id TEXT);
+CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, unit TEXT, quantity_on_hand NUMERIC DEFAULT 0, reorder_point NUMERIC DEFAULT 0, cost_per_unit NUMERIC DEFAULT 0, supplier TEXT, last_restocked DATE);
+CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, doc_number TEXT, vendor_name TEXT, item_name TEXT, quantity NUMERIC, unit TEXT, rate NUMERIC, amount NUMERIC, status TEXT, category TEXT);
+CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, duration_minutes INTEGER, base_price NUMERIC, prices JSONB);`;
+      navigator.clipboard.writeText(sql);
+      alert("SQL Schema copied! Paste into Supabase SQL Editor.");
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-slate-200 gap-4">
+    <div className="space-y-6 animate-fade-in-up">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-slate-800 uppercase tracking-tight">Service Menu</h2>
-          <p className="text-xs text-slate-500 font-medium">Pricing & Packages</p>
-        </div>
-        <div className="relative flex-1 max-w-sm">
-             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
-             <input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-md text-sm bg-white" />
+            <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">System Control</h2>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Setup & Migration</p>
         </div>
         <div className="flex gap-2">
-          {canEdit && (
-             <>
-                <button onClick={() => setIsImportOpen(true)} className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-md text-sm font-bold shadow-sm flex items-center uppercase"><Upload size={16} className="mr-2" /> Bulk Import</button>
-                <button onClick={handleOpenAdd} className="bg-red-600 text-white px-4 py-2 rounded-md text-sm font-bold shadow-sm flex items-center uppercase"><Plus size={16} className="mr-2" /> Add Service</button>
-             </>
-          )}
+             <button onClick={() => setActiveTab('PROFILE')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'PROFILE' ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Security</button>
+             <button onClick={() => setActiveTab('CLOUD')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'CLOUD' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Cloud</button>
+             <button onClick={() => setActiveTab('BACKUP')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'BACKUP' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Backup</button>
+             <button onClick={() => setActiveTab('MIGRATION')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'MIGRATION' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Import</button>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left whitespace-nowrap">
-            <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
-              <tr>
-                <th className="px-4 py-3 font-bold uppercase text-[10px]">Service Name</th>
-                <th className="px-3 py-3 font-bold uppercase text-[10px] text-right bg-blue-50/50">Hatchback</th>
-                <th className="px-3 py-3 font-bold uppercase text-[10px] text-right bg-blue-50/50">Sedan</th>
-                <th className="px-3 py-3 font-bold uppercase text-[10px] text-right bg-blue-50/50">SUV/MUV</th>
-                <th className="px-3 py-3 font-bold uppercase text-[10px] text-right bg-purple-50/50">Premium</th>
-                {canEdit && <th className="px-4 py-3 font-bold uppercase text-[10px] text-center">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredServices.map((s) => (
-                <tr key={s.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-bold text-slate-800">{s.name} <span className="text-[9px] text-slate-400 font-mono ml-2 uppercase">{s.sku}</span></td>
-                  <td className="px-3 py-3 text-right bg-blue-50/30 font-medium">₹{s.prices.HATCHBACK || 0}</td>
-                  <td className="px-3 py-3 text-right bg-blue-50/30 font-medium">₹{s.prices.SEDAN || 0}</td>
-                  <td className="px-3 py-3 text-right bg-blue-50/30 font-medium">₹{s.prices.SUV_MUV || 0}</td>
-                  <td className="px-3 py-3 text-right bg-purple-50/30 font-bold text-purple-700">₹{s.prices.LUXURY || 0}</td>
-                  {canEdit && (
-                      <td className="px-4 py-3 text-center flex justify-center gap-2">
-                          <button onClick={() => handleOpenEdit(s)} className="text-blue-600 bg-blue-50 p-1.5 rounded"><Edit size={14}/></button>
-                          <button onClick={() => handleDelete(s.id)} className="text-red-600 bg-red-50 p-1.5 rounded"><Trash2 size={14}/></button>
-                      </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {activeTab === 'PROFILE' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-1 bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex flex-col items-center">
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 w-full text-left tracking-widest">Brand Logo</h4>
+                <div className="w-32 h-32 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden mb-6 bg-slate-50 group relative">
+                    {logoUrl ? <img src={logoUrl} alt="Logo" className="max-w-full max-h-full object-contain" /> : <ImageIcon size={32} className="text-slate-300" />}
+                </div>
+                <label className="w-full">
+                    <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                    <div className="w-full py-3 bg-slate-900 text-white rounded-lg font-black uppercase text-[10px] text-center cursor-pointer hover:bg-black transition-all">Update Logo</div>
+                </label>
+            </div>
+            <div className="md:col-span-2">
+                <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+                    <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Lock size={14} className="text-red-600"/> Security Access</h4>
+                    <form onSubmit={handleUpdatePasswords} className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Master Admin Passcode</label>
+                                <input type="password" value={passSuper} onChange={e => setPassSuper(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-600/20" />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Staff Portal Passcode</label>
+                                <input type="password" value={passStaff} onChange={e => setPassStaff(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-600/20" />
+                            </div>
+                        </div>
+                        <button type="submit" className="px-8 py-3 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-700 shadow-lg">Save Credentials</button>
+                    </form>
+                </div>
+            </div>
         </div>
-      </div>
-      
-      {isImportOpen && canEdit && (
-          <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-xl rounded-lg shadow-2xl text-black">
-                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-                      <h3 className="text-lg font-bold text-slate-800 uppercase flex items-center gap-2"><FileSpreadsheet size={18}/> Service Bulk Importer</h3>
-                      <button onClick={() => setIsImportOpen(false)} className="text-slate-400 hover:text-red-500"><X size={20}/></button>
-                  </div>
-                  <div className="p-6">
-                      <div className="p-4 rounded-lg mb-4 border bg-red-50 border-red-100">
-                          <div className="flex justify-between items-start mb-2">
-                              <h4 className="text-[10px] font-black uppercase text-red-800">CSV Column Sequence</h4>
-                              <button onClick={() => {
-                                  navigator.clipboard.writeText("Foam Wash, 350, 450, 600, 1000\nFull Polish, 1200, 1500, 1800, 3000");
-                                  alert("Copied!");
-                              }} className="text-[9px] bg-white border px-2 py-1 rounded font-bold">Copy Example</button>
-                          </div>
-                          <code className="block bg-white p-2 rounded text-[10px] font-mono text-slate-600">Name, Hatchback, Sedan, SUV, Premium</code>
-                      </div>
-                      <textarea className="w-full h-48 p-3 border rounded-md font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none text-black" placeholder="Wash, 300, 400, 500, 800" value={importText} onChange={e => setImportText(e.target.value)} />
-                      <div className="mt-4 flex justify-end gap-3">
-                          <button onClick={() => setIsImportOpen(false)} className="px-4 py-2 border rounded-md text-xs font-bold uppercase">Cancel</button>
-                          <button onClick={handleBulkImport} className="px-6 py-2 bg-slate-900 text-white rounded-md text-xs font-bold uppercase">Import Services</button>
-                      </div>
-                  </div>
-              </div>
-          </div>
+      )}
+
+      {activeTab === 'CLOUD' && (
+         <div className="space-y-6">
+             <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-8 rounded-xl border border-slate-700 shadow-2xl">
+                <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Cloud Engine</h4>
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.3em] mb-8">PostgreSQL / Supabase Sync</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+                    <input type="text" value={cloudUrl} onChange={e => setCloudUrl(e.target.value)} placeholder="Supabase URL" className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
+                    <input type="password" value={cloudKey} onChange={e => setCloudKey(e.target.value)} placeholder="Service Role Key" className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
+                </div>
+                <div className="mt-8 flex items-center gap-6">
+                    <button onClick={handleConnect} disabled={isConnecting} className="px-10 py-4 bg-red-600 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-red-700 shadow-xl flex items-center gap-3 disabled:bg-slate-700">
+                        {isConnecting ? <Loader2 className="animate-spin" size={16} /> : <Wifi size={16} />} Establish Cloud Link
+                    </button>
+                    <span className="text-[10px] font-black text-white uppercase tracking-widest">Status: {isCloudConnected ? 'CONNECTED' : 'OFFLINE'}</span>
+                </div>
+             </div>
+             {isCloudConnected && (
+                <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-lg flex items-center justify-between">
+                    <div>
+                        <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Push Local to Cloud</h4>
+                        <p className="text-xs text-emerald-700 font-medium max-w-md">Update cloud database with all local records.</p>
+                    </div>
+                    <button onClick={handleForceSync} disabled={isSyncingAll} className="px-8 py-3 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 shadow-lg flex items-center gap-2">
+                        {isSyncingAll ? <Loader2 className="animate-spin" size={14}/> : <RefreshCcw size={14}/>} Sync All Data
+                    </button>
+                </div>
+             )}
+             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg"><Code size={24} /></div>
+                    <h4 className="font-black text-slate-800 uppercase text-[10px] tracking-widest">SQL Schema v2.2</h4>
+                </div>
+                <button onClick={copySupabaseSql} className="px-6 py-2 bg-slate-100 text-slate-700 rounded-md text-[10px] font-black uppercase hover:bg-slate-200 flex items-center gap-2"><Copy size={12} /> Copy SQL</button>
+             </div>
+         </div>
+      )}
+
+      {activeTab === 'BACKUP' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6 mx-auto"><FileJson size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Export JSON</h4>
+                <button onClick={handleFullSystemBackup} className="w-full py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-black shadow-lg">Generate Backup</button>
+            </div>
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-6 mx-auto"><RefreshCcw size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Restore System</h4>
+                <label className="w-full">
+                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
+                    <div className="w-full py-4 bg-white border-2 border-slate-900 text-slate-900 rounded-lg font-black uppercase text-xs tracking-widest text-center cursor-pointer hover:bg-slate-50 transition-all">Upload & Restore</div>
+                </label>
+            </div>
+        </div>
+      )}
+
+      {activeTab === 'MIGRATION' && (
+        <div className="space-y-6">
+            <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
+                <div className="flex items-center gap-3 mb-6">
+                    <Landmark className="text-indigo-600" size={28}/>
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Master Financial Importer</h4>
+                </div>
+                <p className="text-sm text-indigo-700 mb-8 max-w-2xl font-medium">Select your 8-column accounting spreadsheet (Excel/CSV). This system automatically detects Income and Expenses based on Debit/Credit columns.</p>
+                
+                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm relative group max-w-lg">
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest">Account Ledger (Full Sequence)</h5>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50">
+                        {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
+                        <span className="text-sm font-bold text-indigo-800">Select Financial CSV</span>
+                        <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
+                    </label>
+                    <p className="text-[9px] text-slate-400 mt-4 font-mono leading-tight bg-slate-50 p-2 rounded">Format: Date, Acc Name, Acc Type, Adj Type, Debit, Credit, Balance, Desc</p>
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Sparkles size={14} className="text-amber-500"/> AI Schema Generator</h4>
+                <div className="space-y-4">
+                    <p className="text-xs text-slate-600 font-medium">Paste custom data snippets here for Gemini AI to generate a direct SQL migration query.</p>
+                    <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Paste any legacy data rows here..." className="w-full h-40 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-500/20" />
+                    <div className="flex justify-end">
+                        <button onClick={() => {
+                            if (!inputText.trim()) return;
+                            setLoading(true);
+                            analyzeDataStructure(inputText).then(res => { setResult(res); setLoading(false); }).catch(() => setLoading(false));
+                        }} disabled={loading} className="px-8 py-3 bg-slate-900 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black flex items-center gap-2">
+                            {loading ? <Loader2 className="animate-spin" size={14} /> : <Database size={14} />} Analyze
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {result && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800"><pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap">{result.proposedSchema}</pre></div>
+                    <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm h-[300px] overflow-y-auto"><div className="text-xs text-slate-600 whitespace-pre-wrap">{result.migrationPlan}</div></div>
+                </div>
+            )}
+        </div>
       )}
     </div>
   );
