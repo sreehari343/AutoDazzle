@@ -92,9 +92,12 @@ export const MigrationAssistant: React.FC = () => {
   };
 
   const cleanNum = (val: string) => {
-      if (!val || val === '-' || val === '#ERROR!' || val.trim() === '') return 0;
+      if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
+      // Regex strictly keeps numbers, decimals and signs. Removes symbols like ₹ and commas.
       const cleaned = val.replace(/[^0-9.-]+/g, '');
-      return parseFloat(cleaned) || 0;
+      const parsed = parseFloat(cleaned);
+      // Filter out weirdly huge scientific notation results from Excel 'Totals'
+      return isFinite(parsed) ? parsed : 0;
   };
 
   const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,21 +113,25 @@ export const MigrationAssistant: React.FC = () => {
               return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
           });
 
-          // Filter header row (Date, Acc Name, etc)
-          const dataRows = (rows[0][0].toLowerCase().includes('date') || rows[0][1].toLowerCase().includes('acc')) ? rows.slice(1) : rows;
+          // SKIP HEADERS AND TOTAL ROWS
+          const dataRows = rows.filter(row => {
+             if (row.length < 5) return false;
+             const label = (row[1] || '').toLowerCase();
+             const isHeader = label.includes('acc') || row[0].toLowerCase().includes('date');
+             const isTotal = label.includes('total') || label.includes('balance') || label.includes('summary');
+             return !isHeader && !isTotal && row[1];
+          });
           
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
-              // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
-              if (row.length < 5) return; 
-
+              // SEQUENCE: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
               const date = row[0] || new Date().toISOString().split('T')[0];
               const accName = row[1] || 'Imported Entry';
               const debit = cleanNum(row[3]);
               const credit = cleanNum(row[4]);
               const desc = row[5] || accName;
 
-              // Debit column (Index 3) = Expense
+              // Debit > 0 is Expense, Credit > 0 is Income
               if (debit > 0) {
                   newTxs.push({ 
                       id: `imp-dr-${Date.now()}-${idx}`, 
@@ -136,7 +143,6 @@ export const MigrationAssistant: React.FC = () => {
                       method: 'TRANSFER' 
                   });
               }
-              // Credit column (Index 4) = Income
               if (credit > 0) {
                   newTxs.push({ 
                       id: `imp-cr-${Date.now()}-${idx}`, 
@@ -151,10 +157,10 @@ export const MigrationAssistant: React.FC = () => {
           });
 
           if (newTxs.length === 0) {
-              alert("Import failed: No valid numerical data found in Debit/Credit columns.");
-          } else if (window.confirm(`Found ${newTxs.length} records. These will be mapped to the 6-column ledger format. Proceed?`)) {
+              alert("No valid numerical data found. Ensure Column 4 is Debit and Column 5 is Credit.");
+          } else if (window.confirm(`Detected ${newTxs.length} entries. Total rows filtered out for safety. Import now?`)) {
               bulkAddTransactions(newTxs);
-              alert(`Successfully imported ${newTxs.length} ledger entries.`);
+              alert(`Successfully imported ${newTxs.length} records. Check Dashboard for updated balance.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -289,6 +295,7 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
                     <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
                         <p className="text-[10px] font-black text-slate-400 uppercase mb-1">STRICT COLUMN SEQUENCE (6 COLS):</p>
                         <p className="text-[9px] font-mono text-slate-600 leading-tight">Date, Acc Name, Acc Type, Debit, Credit, Description</p>
+                        <p className="text-[9px] font-bold text-red-500 mt-1 uppercase">Note: Total rows are automatically ignored for safety.</p>
                     </div>
                 </div>
             </div>
