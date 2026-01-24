@@ -6,12 +6,13 @@ import { Service } from '../types.ts';
 // MOVE HELPERS OUTSIDE TO FIX FOCUS BUG (NO MORE CLICKING AFTER EVERY DIGIT)
 const PricingInput = ({ label, field, value, onChange }: { label: string, field: string, value: number, onChange: (val: number) => void }) => (
   <div className="space-y-1">
-      <label className="text-[10px] font-black text-slate-500 uppercase block tracking-wider">{label} Rate (₹)</label>
+      <label className="text-[11px] font-black text-slate-600 uppercase block tracking-wider">{label} Rate (₹)</label>
       <input 
           type="number" 
           value={value === 0 ? '' : value} 
           onChange={e => onChange(parseFloat(e.target.value) || 0)} 
-          className="w-full p-3 border-2 border-slate-200 rounded-md text-sm font-black text-slate-900 bg-white focus:border-red-600 focus:ring-4 focus:ring-red-600/5 outline-none transition-all" 
+          className="w-full p-3 border-2 border-slate-300 rounded-md text-sm font-black text-black bg-white focus:border-red-600 focus:ring-4 focus:ring-red-600/5 outline-none transition-all shadow-sm" 
+          placeholder="0.00"
       />
   </div>
 );
@@ -102,8 +103,14 @@ export const Operations: React.FC = () => {
     setIsModalOpen(false);
   };
 
+  const cleanNum = (val: string) => {
+    if (!val || val.trim() === '') return 0;
+    const cleaned = val.replace(/[^0-9.-]+/g, '');
+    return parseFloat(cleaned) || 0;
+  };
+
   const handleBulkImport = () => {
-    const lines = importText.split('\n').filter(l => l.trim());
+    const lines = importText.split('\n').filter(l => l.trim() && !l.toLowerCase().includes('total'));
     const imported: Service[] = lines.map((line, idx) => {
       const p = line.split(',').map(s => s.trim());
       // STRICT 5 COLS: [0]Name, [1]Hatch, [2]Sedan, [3]SUV, [4]Premium
@@ -112,13 +119,13 @@ export const Operations: React.FC = () => {
           sku: `SVC-${1000 + idx + services.length}`,
           name: p[0] || 'Unknown Service',
           category: 'WASHING', 
-          basePrice: parseFloat(p[1]) || 0,
+          basePrice: cleanNum(p[1]),
           durationMinutes: 30,
           prices: {
-              HATCHBACK: parseFloat(p[1]) || 0,
-              SEDAN: parseFloat(p[2]) || 0,
-              SUV_MUV: parseFloat(p[3]) || 0,
-              LUXURY: parseFloat(p[4]) || 0,
+              HATCHBACK: cleanNum(p[1]),
+              SEDAN: cleanNum(p[2]),
+              SUV_MUV: cleanNum(p[3]),
+              LUXURY: cleanNum(p[4]),
               BIKE: 0, SCOOTY: 0, BULLET: 0, AUTORICKSHAW: 0, AUTOTAXI: 0, PICKUP_SMALL: 0, PICKUP_LARGE: 0
           }
       };
@@ -189,43 +196,43 @@ export const Operations: React.FC = () => {
         </div>
       </div>
       
-      {/* ADD/EDIT MODAL - HIGH CONTRAST & NO FOCUS BUG */}
+      {/* ADD/EDIT MODAL - IMPROVED VISIBILITY & CONTRAST */}
       {isModalOpen && (
-          <div className="fixed inset-0 bg-black/70 z-[9999] flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden text-slate-900 animate-fade-in-up border-4 border-slate-900">
-                  <div className="p-6 border-b-2 border-slate-100 flex justify-between items-center bg-slate-50">
+          <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden text-black animate-fade-in-up border-4 border-slate-900">
+                  <div className="p-6 border-b-2 border-slate-200 flex justify-between items-center bg-slate-100">
                       <div>
-                          <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">{editingId ? 'Edit Package Rates' : 'Create New Package'}</h3>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Update pricing for all segments</p>
+                          <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">{editingId ? 'Edit Service Package' : 'Create New Package'}</h3>
+                          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-1">Configure multi-segment pricing</p>
                       </div>
-                      <button onClick={() => setIsModalOpen(false)} className="p-2 bg-slate-200 text-slate-600 rounded-full hover:bg-red-600 hover:text-white transition-all"><X size={20}/></button>
+                      <button onClick={() => setIsModalOpen(false)} className="p-2 bg-white text-slate-600 rounded-full hover:bg-red-600 hover:text-white transition-all shadow-sm border border-slate-300"><X size={20}/></button>
                   </div>
                   <form onSubmit={handleSubmit} className="p-8 space-y-8 bg-white">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div className="space-y-1">
-                              <label className="text-[10px] font-black text-slate-500 uppercase block tracking-wider">Package Name</label>
+                              <label className="text-[11px] font-black text-slate-700 uppercase block tracking-wider">Package Name</label>
                               <input 
                                 required 
                                 value={formData.name} 
                                 onChange={e => setFormData({...formData, name: e.target.value})} 
-                                className="w-full p-3 border-2 border-slate-200 rounded-md text-sm font-black text-slate-900 bg-white focus:border-red-600 outline-none" 
-                                placeholder="e.g. Foam Wash"
+                                className="w-full p-3 border-2 border-slate-300 rounded-md text-sm font-black text-black bg-white focus:border-red-600 outline-none shadow-sm" 
+                                placeholder="e.g. Foam Wash Deluxe"
                               />
                           </div>
                           <div className="space-y-1">
-                              <label className="text-[10px] font-black text-slate-500 uppercase block tracking-wider">SKU / Code</label>
+                              <label className="text-[11px] font-black text-slate-700 uppercase block tracking-wider">System SKU / ID</label>
                               <input 
                                 placeholder="AUTO-GEN" 
                                 value={formData.sku} 
                                 onChange={e => setFormData({...formData, sku: e.target.value})} 
-                                className="w-full p-3 border-2 border-slate-200 rounded-md text-sm font-mono font-bold text-slate-600 bg-slate-50" 
+                                className="w-full p-3 border-2 border-slate-200 rounded-md text-sm font-mono font-bold text-slate-800 bg-slate-50" 
                               />
                           </div>
                       </div>
 
-                      <div className="bg-slate-50 p-6 rounded-xl border-2 border-slate-100 space-y-6">
-                          <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
-                             <Car size={14} className="text-red-600"/> Multi-Segment Rates (INR)
+                      <div className="bg-slate-50 p-6 rounded-xl border-2 border-slate-200 space-y-6">
+                          <h4 className="text-[11px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2 border-b-2 border-slate-200 pb-2">
+                             <Car size={14} className="text-red-600"/> PRICING STRUCTURE (INR)
                           </h4>
                           <div className="grid grid-cols-2 gap-6">
                               <PricingInput label="Hatchback" field="price_HATCHBACK" value={formData.price_HATCHBACK} onChange={(val) => setFormData({...formData, price_HATCHBACK: val})} />
@@ -236,9 +243,9 @@ export const Operations: React.FC = () => {
                       </div>
 
                       <div className="flex gap-4">
-                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-4 border-2 border-slate-200 rounded-lg text-xs font-black uppercase text-slate-600 hover:bg-slate-50 transition-all">Cancel</button>
+                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-4 border-2 border-slate-300 rounded-lg text-xs font-black uppercase text-slate-600 bg-white hover:bg-slate-50 transition-all">Cancel</button>
                           <button type="submit" className="flex-[2] py-4 bg-slate-900 text-white rounded-lg text-xs font-black uppercase shadow-xl hover:bg-black transition-all transform hover:-translate-y-0.5 tracking-widest">
-                              {editingId ? 'Save Changes' : 'Create Package'}
+                              {editingId ? 'Confirm Updates' : 'Finalize Package'}
                           </button>
                       </div>
                   </form>
@@ -248,34 +255,34 @@ export const Operations: React.FC = () => {
 
       {/* BULK IMPORT MODAL */}
       {isImportOpen && canEdit && (
-          <div className="fixed inset-0 bg-black/70 z-[9999] flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl text-slate-900 animate-fade-in-up border-4 border-indigo-900">
-                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+          <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl text-black animate-fade-in-up border-4 border-indigo-900">
+                  <div className="p-6 border-b flex justify-between items-center bg-slate-100">
                       <h3 className="text-lg font-black text-indigo-900 uppercase flex items-center gap-2"><FileSpreadsheet size={18}/> Service Batch Uploader</h3>
-                      <button onClick={() => setIsImportOpen(false)} className="p-1 bg-slate-200 rounded text-slate-500 hover:text-red-500 transition-all"><X size={20}/></button>
+                      <button onClick={() => setIsImportOpen(false)} className="p-2 bg-white rounded-full text-slate-500 border border-slate-300 hover:text-red-500 transition-all"><X size={20}/></button>
                   </div>
-                  <div className="p-8 text-black">
-                      <div className="p-4 rounded-lg mb-6 border-2 border-indigo-100 bg-indigo-50/50">
+                  <div className="p-8">
+                      <div className="p-4 rounded-lg mb-6 border-2 border-indigo-200 bg-indigo-50/50">
                           <div className="flex justify-between items-start mb-2">
                               <h4 className="text-[10px] font-black uppercase text-indigo-800 flex items-center gap-1"><Info size={10}/> STRICT 5 COLUMN SEQUENCE</h4>
                               <button onClick={() => {
-                                  navigator.clipboard.writeText("Foam Wash, 350, 450, 600, 1000\nInterior Detail, 1200, 1500, 1800, 3000");
-                                  alert("Copy successful!");
-                              }} className="text-[9px] bg-white border border-indigo-200 px-3 py-1 rounded font-black uppercase hover:bg-white transition-all shadow-sm">Copy Sample</button>
+                                  navigator.clipboard.writeText("Foam Wash, 350, 450, 600, 1000\nFull Polish, 1200, 1500, 1800, 3000");
+                                  alert("Example Copied!");
+                              }} className="text-[9px] bg-white border border-indigo-200 px-3 py-1 rounded font-black uppercase hover:bg-white transition-all shadow-sm">Copy Example</button>
                           </div>
-                          <code className="block bg-white p-3 rounded-md text-[10px] font-mono text-slate-700 border border-indigo-200 shadow-inner">
-                             Name, Hatch Rate, Sedan Rate, SUV Rate, Premium Rate
+                          <code className="block bg-white p-3 rounded-md text-[10px] font-mono text-slate-700 border border-indigo-100 shadow-inner">
+                             Name, Hatchback Rate, Sedan Rate, SUV Rate, Premium Rate
                           </code>
                       </div>
                       <textarea 
-                        className="w-full h-48 p-4 border-2 border-slate-200 rounded-lg font-mono text-xs focus:border-indigo-600 outline-none text-slate-900 bg-white shadow-inner" 
-                        placeholder="Foam Wash, 300, 400, 500, 800" 
+                        className="w-full h-48 p-4 border-2 border-slate-300 rounded-lg font-mono text-xs focus:border-indigo-600 outline-none text-black bg-white shadow-inner" 
+                        placeholder="Service Name, 300, 400, 500, 800" 
                         value={importText} 
                         onChange={e => setImportText(e.target.value)} 
                       />
                       <div className="mt-6 flex gap-4">
-                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-3 border-2 border-slate-200 rounded-lg text-xs font-black uppercase text-slate-500">Cancel</button>
-                          <button onClick={handleBulkImport} className="flex-[2] py-3 bg-indigo-600 text-white rounded-lg text-xs font-black uppercase shadow-lg hover:bg-indigo-700 transition-all">Process Bulk Upload</button>
+                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-3 border-2 border-slate-300 rounded-lg text-xs font-black uppercase text-slate-600 bg-white">Cancel</button>
+                          <button onClick={handleBulkImport} className="flex-[2] py-3 bg-indigo-600 text-white rounded-lg text-xs font-black uppercase shadow-lg hover:bg-indigo-700 transition-all">Begin Import Process</button>
                       </div>
                   </div>
               </div>
