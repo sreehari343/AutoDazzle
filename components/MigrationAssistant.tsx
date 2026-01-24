@@ -93,11 +93,19 @@ export const MigrationAssistant: React.FC = () => {
 
   const cleanNum = (val: string) => {
       if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
-      // Regex strictly keeps numbers, decimals and signs. Removes symbols like ₹ and commas.
+      
+      // Detect Scientific Notation (e.g. 1.23E+11) which usually represents error/total columns
+      if (/[eE][+-]?\d+/.test(val)) return 0;
+
+      // Clean the string to only allow numbers and decimal point
       const cleaned = val.replace(/[^0-9.-]+/g, '');
       const parsed = parseFloat(cleaned);
-      // Filter out weirdly huge scientific notation results from Excel 'Totals'
-      return isFinite(parsed) ? parsed : 0;
+      
+      // SAFETY CAP: Ignore any transaction amount over 10 Lakhs (likely a Grand Total row)
+      if (isFinite(parsed) && Math.abs(parsed) < 1000000) {
+          return parsed;
+      }
+      return 0;
   };
 
   const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -113,25 +121,33 @@ export const MigrationAssistant: React.FC = () => {
               return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
           });
 
-          // SKIP HEADERS AND TOTAL ROWS
+          // AGGRESSIVE ROW FILTERING
           const dataRows = rows.filter(row => {
              if (row.length < 5) return false;
-             const label = (row[1] || '').toLowerCase();
-             const isHeader = label.includes('acc') || row[0].toLowerCase().includes('date');
-             const isTotal = label.includes('total') || label.includes('balance') || label.includes('summary');
-             return !isHeader && !isTotal && row[1];
+             const fullRowText = row.join(' ').toLowerCase();
+             
+             // Ignore headers and footer summary rows
+             const isHeader = fullRowText.includes('acc') || fullRowText.includes('date');
+             const isSummary = fullRowText.includes('total') || 
+                               fullRowText.includes('balance') || 
+                               fullRowText.includes('summary') || 
+                               fullRowText.includes('b/f') || 
+                               fullRowText.includes('c/f') ||
+                               fullRowText.includes('brought forward');
+                               
+             return !isHeader && !isSummary && row[1]; // Row 1 must have an Account Name
           });
           
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
-              // SEQUENCE: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
+              // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
               const date = row[0] || new Date().toISOString().split('T')[0];
               const accName = row[1] || 'Imported Entry';
               const debit = cleanNum(row[3]);
               const credit = cleanNum(row[4]);
               const desc = row[5] || accName;
 
-              // Debit > 0 is Expense, Credit > 0 is Income
+              // Process Debit (Expense)
               if (debit > 0) {
                   newTxs.push({ 
                       id: `imp-dr-${Date.now()}-${idx}`, 
@@ -143,6 +159,7 @@ export const MigrationAssistant: React.FC = () => {
                       method: 'TRANSFER' 
                   });
               }
+              // Process Credit (Income)
               if (credit > 0) {
                   newTxs.push({ 
                       id: `imp-cr-${Date.now()}-${idx}`, 
@@ -157,28 +174,15 @@ export const MigrationAssistant: React.FC = () => {
           });
 
           if (newTxs.length === 0) {
-              alert("No valid numerical data found. Ensure Column 4 is Debit and Column 5 is Credit.");
-          } else if (window.confirm(`Detected ${newTxs.length} entries. Total rows filtered out for safety. Import now?`)) {
+              alert("Import Shield Blocked: No valid transactions found. Total rows or amounts over 10 Lakhs were ignored for safety.");
+          } else if (window.confirm(`Successfully filtered data. ${newTxs.length} legitimate transactions found. (Total/Balance rows were removed). Proceed?`)) {
               bulkAddTransactions(newTxs);
-              alert(`Successfully imported ${newTxs.length} records. Check Dashboard for updated balance.`);
+              alert(`Import Complete. Your balance is now based on ${newTxs.length} filtered records.`);
           }
           setImportLoading(false);
           e.target.value = '';
       };
       reader.readAsText(file);
-  };
-
-  const copySupabaseSql = () => {
-      const sql = `-- AUTO DAZZLE ERP SCHEMA v2.2
-CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, address TEXT, lifetime_value NUMERIC DEFAULT 0, joined_date DATE DEFAULT CURRENT_DATE, visits INTEGER DEFAULT 0, is_premium BOOLEAN DEFAULT FALSE, vehicles JSONB DEFAULT '[]'::jsonb);
-CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC DEFAULT 0, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
-CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL, segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC DEFAULT 0, tax NUMERIC DEFAULT 0, notes TEXT, payment_status TEXT);
-CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC DEFAULT 0, method TEXT, description TEXT, reference_id TEXT);
-CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, unit TEXT, quantity_on_hand NUMERIC DEFAULT 0, reorder_point NUMERIC DEFAULT 0, cost_per_unit NUMERIC DEFAULT 0, supplier TEXT, last_restocked DATE);
-CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, doc_number TEXT, vendor_name TEXT, item_name TEXT, quantity NUMERIC, unit TEXT, rate NUMERIC, amount NUMERIC, status TEXT, category TEXT);
-CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, duration_minutes INTEGER, base_price NUMERIC, prices JSONB);`;
-      navigator.clipboard.writeText(sql);
-      alert("SQL Schema copied!");
   };
 
   return (
@@ -282,20 +286,20 @@ CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, c
             <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
                 <div className="flex items-center gap-3 mb-6">
                     <Landmark className="text-indigo-600" size={28}/>
-                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Master Ledger Importer</h4>
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Financial Master Importer</h4>
                 </div>
                 
                 <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm max-w-lg">
-                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> Financial CSV Importer</h5>
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> Zero-Error Financial Importer</h5>
                     <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
                         {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
-                        <span className="text-sm font-bold text-indigo-800">Select Financial Ledger</span>
+                        <span className="text-sm font-bold text-indigo-800">Select CSV Ledger</span>
                         <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
                     </label>
                     <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
                         <p className="text-[10px] font-black text-slate-400 uppercase mb-1">STRICT COLUMN SEQUENCE (6 COLS):</p>
                         <p className="text-[9px] font-mono text-slate-600 leading-tight">Date, Acc Name, Acc Type, Debit, Credit, Description</p>
-                        <p className="text-[9px] font-bold text-red-500 mt-1 uppercase">Note: Total rows are automatically ignored for safety.</p>
+                        <p className="text-[9px] font-bold text-red-500 mt-2 uppercase">Safety Active: Total rows and amounts &gt; 10L are auto-ignored.</p>
                     </div>
                 </div>
             </div>
