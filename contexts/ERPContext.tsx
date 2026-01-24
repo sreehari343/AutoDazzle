@@ -86,7 +86,7 @@ const mapToDb = (table: string, data: any) => {
     };
     if (table === 'staff') return {
         id: data.id, name: data.name, role: data.role, email: data.email, phone: data.phone,
-        base_salary: data.baseSalary, active: data.active, joined_date: data.joinedDate,
+        base_salary: data.baseSalary, active: data.active, joined_date: data.joined_date,
         current_advance: data.currentAdvance, loan_balance: data.loanBalance
     };
     if (table === 'transactions') return {
@@ -500,27 +500,70 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     txs.forEach(t => pushToCloud('transactions', t));
   };
 
+  // NEW: Semantic Mapping for imported categories to specific Ledger accounts
   const updateLedger = (newTransactions: Transaction[]) => {
     setAccounts(prev => {
       let updatedAccounts = [...prev];
       newTransactions.forEach(tx => {
+         const category = tx.category.toLowerCase();
+         const isIncome = tx.type === 'INCOME';
+
          updatedAccounts = updatedAccounts.map(acc => {
+            const accName = acc.name.toLowerCase();
+            
+            // 1. Cash Impact (Global)
             if (acc.code === '1000') {
-              if (tx.type === 'INCOME') return { ...acc, balance: acc.balance + tx.amount };
-              if (tx.type === 'EXPENSE') return { ...acc, balance: acc.balance - tx.amount };
+              return { ...acc, balance: isIncome ? acc.balance + tx.amount : acc.balance - tx.amount };
             }
-            if (tx.type === 'INCOME' && acc.code === '4000') return { ...acc, balance: acc.balance + tx.amount };
-            if (tx.type === 'EXPENSE') {
-               const cat = tx.category.toLowerCase();
-               if (acc.code === '1200' && (cat.includes('inventory') || cat.includes('stock'))) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5100' && (cat.includes('labor') || cat.includes('payroll') || cat.includes('salary'))) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5200' && cat.includes('rent')) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5300' && (cat.includes('utility') || cat.includes('power') || cat.includes('water'))) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5000' && !cat.includes('labor') && !cat.includes('rent') && !cat.includes('utility') && !cat.includes('inventory')) return { ...acc, balance: acc.balance + tx.amount };
+
+            // 2. Specific Mapping by Code or Name
+            // Service Revenue
+            if (isIncome && (acc.code === '4000' || category.includes('sale') || category.includes('revenue') || category.includes('income'))) {
+              return { ...acc, balance: acc.balance + tx.amount };
             }
+
+            // Accounts Receivable (Income side for balance sheet)
+            if (isIncome && (acc.code === '1100' || accName.includes('receivable'))) {
+              return { ...acc, balance: acc.balance + tx.amount };
+            }
+
+            // Accounts Payable (Expense side for balance sheet)
+            if (!isIncome && (acc.code === '2000' || accName.includes('payable'))) {
+              return { ...acc, balance: acc.balance + tx.amount };
+            }
+
+            // Expenses
+            if (!isIncome) {
+                if ((acc.code === '1200' || accName.includes('inventory') || accName.includes('asset')) && (category.includes('inventory') || category.includes('stock'))) {
+                   return { ...acc, balance: acc.balance + tx.amount };
+                }
+                else if ((acc.code === '5100' || accName.includes('labor') || accName.includes('salary')) && (category.includes('labor') || category.includes('payroll') || category.includes('salary') || category.includes('commission'))) {
+                   return { ...acc, balance: acc.balance + tx.amount };
+                }
+                else if ((acc.code === '5200' || accName.includes('rent')) && (category.includes('rent') || category.includes('lease'))) {
+                   return { ...acc, balance: acc.balance + tx.amount };
+                }
+                else if ((acc.code === '5300' || accName.includes('utility')) && (category.includes('utility') || category.includes('power') || category.includes('water') || category.includes('electricity') || category.includes('internet'))) {
+                   return { ...acc, balance: acc.balance + tx.amount };
+                }
+                else if (acc.code === '5000' || accName.includes('chemical')) {
+                   // Generic chemical/ops expense fallback
+                   const isSpecific = category.includes('labor') || category.includes('rent') || category.includes('utility') || category.includes('inventory');
+                   if (!isSpecific) return { ...acc, balance: acc.balance + tx.amount };
+                }
+            }
+
+            // Equity fallback (Opening Balances / Capital)
+            if (acc.code === '3000' || accName.includes('capital') || accName.includes('equity')) {
+               if (category.includes('capital') || category.includes('opening')) {
+                  return { ...acc, balance: isIncome ? acc.balance + tx.amount : acc.balance - tx.amount };
+               }
+            }
+
             return acc;
          });
       });
+      persist('erp_accounts', updatedAccounts);
       return updatedAccounts;
     });
   };
