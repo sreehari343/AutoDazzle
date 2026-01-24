@@ -54,6 +54,7 @@ interface ERPContextType {
   addPurchase: (purchase: PurchaseOrder) => void;
   addTransaction: (tx: Transaction) => void;
   bulkAddTransactions: (txs: Transaction[]) => void;
+  bulkAddPurchases: (pos: PurchaseOrder[]) => void;
   executePayroll: (month: string, payrollData: any[]) => void;
   bulkAddServices: (services: Service[]) => void;
   restoreData: (data: any) => void;
@@ -102,6 +103,10 @@ const mapToDb = (table: string, data: any) => {
         item_name: data.itemName, quantity: data.quantity, unit: data.unit, rate: data.rate,
         amount: data.amount, status: data.status, category: data.category
     };
+    if (table === 'services') return {
+        id: data.id, sku: data.sku, name: data.name, category: data.category, 
+        duration_minutes: data.durationMinutes, base_price: data.basePrice, prices: data.prices
+    };
     return data;
 };
 
@@ -126,6 +131,9 @@ const mapFromDb = (table: string, data: any) => {
     };
     if (table === 'purchases') return {
         ...data, docNumber: data.doc_number, vendorName: data.vendor_name, itemName: data.item_name
+    };
+    if (table === 'services') return {
+        ...data, durationMinutes: data.duration_minutes, basePrice: data.base_price
     };
     return data;
 };
@@ -191,13 +199,14 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const pullFromCloud = useCallback(async (client: SupabaseClient) => {
       try {
           setSyncStatus('SYNCING');
-          const [cRes, jRes, sRes, tRes, iRes, pRes] = await Promise.all([
+          const [cRes, jRes, sRes, tRes, iRes, pRes, svcRes] = await Promise.all([
               client.from('customers').select('*'),
               client.from('jobs').select('*'),
               client.from('staff').select('*'),
               client.from('transactions').select('*'),
               client.from('inventory').select('*'),
-              client.from('purchases').select('*')
+              client.from('purchases').select('*'),
+              client.from('services').select('*')
           ]);
 
           if (cRes.data) {
@@ -230,6 +239,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setPurchases(mapped);
               persist('erp_purchases', mapped);
           }
+          if (svcRes.data && svcRes.data.length > 0) {
+              const mapped = svcRes.data.map(d => mapFromDb('services', d));
+              setServices(mapped);
+              persist('erp_services', mapped);
+          }
 
           setSyncStatus('SYNCED');
           setLastSyncError(null);
@@ -250,6 +264,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const tPayload = transactions.map(t => mapToDb('transactions', t));
           const iPayload = inventory.map(i => mapToDb('inventory', i));
           const pPayload = purchases.map(p => mapToDb('purchases', p));
+          const svcPayload = services.map(s => mapToDb('services', s));
 
           await Promise.all([
             supabase.from('customers').upsert(cPayload),
@@ -257,11 +272,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             supabase.from('staff').upsert(sPayload),
             supabase.from('transactions').upsert(tPayload),
             supabase.from('inventory').upsert(iPayload),
-            supabase.from('purchases').upsert(pPayload)
+            supabase.from('purchases').upsert(pPayload),
+            supabase.from('services').upsert(svcPayload)
           ]);
           
           setSyncStatus('SYNCED');
-          alert("All local data has been successfully pushed to the Cloud Database.");
+          alert("All local modules (including Services) have been successfully pushed to the Cloud Database.");
       } catch (err: any) {
           console.error("Manual Sync Error:", err);
           setSyncStatus('ERROR');
@@ -461,6 +477,13 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addTransaction(tx);
   };
 
+  const bulkAddPurchases = (pos: PurchaseOrder[]) => {
+      const updated = [...purchases, ...pos];
+      setPurchases(updated);
+      persist('erp_purchases', updated);
+      pos.forEach(p => pushToCloud('purchases', p));
+  };
+
   const addTransaction = (tx: Transaction) => {
     const newTx = [...transactions, tx];
     setTransactions(newTx);
@@ -592,24 +615,28 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [...services, service];
     setServices(updated);
     persist('erp_services', updated);
+    pushToCloud('services', service);
   };
 
   const updateService = (service: Service) => {
     const updated = services.map(s => s.id === service.id ? service : s);
     setServices(updated);
     persist('erp_services', updated);
+    pushToCloud('services', service);
   };
 
   const deleteService = (id: string) => {
     const updated = services.filter(s => s.id !== id);
     setServices(updated);
     persist('erp_services', updated);
+    removeFromCloud('services', id);
   };
 
   const bulkAddServices = (newServices: Service[]) => {
     const updated = [...services, ...newServices];
     setServices(updated);
     persist('erp_services', updated);
+    newServices.forEach(s => pushToCloud('services', s));
   };
 
   const connectToCloud = async (url: string, key: string): Promise<boolean> => {
@@ -626,6 +653,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStaff(data.modules.staff || []);
       setTransactions(data.modules.transactions || []);
       setInventory(data.modules.inventory || []);
+      setServices(data.modules.services || []);
       setAccounts(data.modules.financials || MOCK_ACCOUNTS);
       setPayrollHistory(data.modules.payrollHistory || []);
       alert('System Data Restored Successfully.');
@@ -646,7 +674,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
       isCloudConnected, syncStatus, lastSyncError, connectToCloud, syncAllLocalToCloud,
       addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
-      addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, addCustomer, updateCustomer, addPurchase, addTransaction, bulkAddTransactions, executePayroll
+      addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, addCustomer, updateCustomer, addPurchase, addTransaction, bulkAddTransactions, bulkAddPurchases, executePayroll
     }}>
       {children}
     </ERPContext.Provider>
