@@ -500,76 +500,67 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     txs.forEach(t => pushToCloud('transactions', t));
   };
 
-  // REFINED: Semantic Mapping Engine (STRICT REVENUE VS EXPENSE)
+  // --- SEMANTIC ENGINE: THE VAULT V4 (MASTER LEDGER SYNC) ---
   const updateLedger = (newTransactions: Transaction[]) => {
     setAccounts(prev => {
       let updatedAccounts = [...prev];
+
       newTransactions.forEach(tx => {
-         const category = tx.category.toLowerCase();
-         const description = tx.description.toLowerCase();
-         const isIncome = tx.type === 'INCOME';
+         const cat = tx.category.toLowerCase();
+         const desc = tx.description.toLowerCase();
+         const isInc = tx.type === 'INCOME';
+         const amt = tx.amount;
 
          updatedAccounts = updatedAccounts.map(acc => {
             const accName = acc.name.toLowerCase();
-            
-            // 1. Cash Impact (Asset) - Global tracking for every transaction
-            if (acc.code === '1000') {
-              return { ...acc, balance: isIncome ? acc.balance + tx.amount : acc.balance - tx.amount };
+            const accCode = acc.code;
+
+            // 1. DIRECT ACCOUNT MATCH (STRICT) - If row explicitly names a master account
+            if (cat === accName || cat.includes(accName) || accName.includes(cat)) {
+                return { ...acc, balance: isInc ? acc.balance + amt : acc.balance + amt }; 
+                // Note: Double-entry rows already come typed. We just sum the balance.
             }
 
-            // 2. REVENUE BRANCH (Only processes if INCOME)
-            if (isIncome) {
-                // Priority 1: Service Revenue / Sales
-                if (acc.code === '4000' || 
-                    category.includes('sale') || category.includes('wash') || 
-                    category.includes('revenue') || category.includes('income')) {
-                  return { ...acc, balance: acc.balance + tx.amount };
-                }
-                // Priority 2: Receivables
-                if (acc.code === '1100' || accName.includes('receivable')) {
-                   // Only update AR if it's explicitly mentioned in category
-                   if (category.includes('receivable') || category.includes('outstanding')) {
-                      return { ...acc, balance: acc.balance + tx.amount };
-                   }
-                }
-                // Equity Branch (Investments)
-                if ((acc.code === '3000' || accName.includes('capital')) && (category.includes('capital') || category.includes('invest'))) {
-                    return { ...acc, balance: acc.balance + tx.amount };
-                }
+            // 2. SEMANTIC CATEGORY MATCHING
+            // ASSETS (1000-1999)
+            if (accCode.startsWith('1')) {
+                if (accCode === '1000' && cat.includes('cash')) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
+                if (accCode === '1010' && cat.includes('bank')) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
+                if (accCode === '1500' && (cat.includes('land') || cat.includes('lease') || cat.includes('building'))) return { ...acc, balance: isInc ? acc.balance - amt : acc.balance + amt };
+                if (accCode === '1600' && (cat.includes('deposit') || cat.includes('advance'))) return { ...acc, balance: isInc ? acc.balance - amt : acc.balance + amt };
+                if (accCode === '1400' && (cat.includes('equipment') || cat.includes('lift') || cat.includes('compressor'))) return { ...acc, balance: isInc ? acc.balance - amt : acc.balance + amt };
             }
 
-            // 3. EXPENSE BRANCH (Only processes if EXPENSE)
-            if (!isIncome) {
-                // EXCLUSION: If it's a "Wash" or "Revenue" item erroneously marked as expense, block it from expense accounts
-                const isErroneousRevenue = category.includes('wash') || category.includes('sale') || category.includes('income');
+            // LIABILITIES (2000-2999)
+            if (accCode.startsWith('2')) {
+                if (accCode === '2000' && (cat.includes('payable') || cat.includes('cs car care'))) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
+                if (accCode === '2100' && (cat.includes('loan') || cat.includes('pmegp'))) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
+            }
 
-                // Priority 1: LABOR / STAFF (Critical Fix)
-                if ((acc.code === '5100' || accName.includes('labor') || accName.includes('salary')) && 
-                    (category.includes('labor') || category.includes('staff') || category.includes('salary') || 
-                     category.includes('wage') || category.includes('commission') || description.includes('staff'))) {
-                   return { ...acc, balance: acc.balance + tx.amount };
-                }
+            // EQUITY (3000)
+            if (accCode === '3000' && (cat.includes('capital') || cat.includes('investment'))) {
+                return { ...acc, balance: acc.balance + amt };
+            }
 
-                // Priority 2: RENT
-                else if ((acc.code === '5200' || accName.includes('rent')) && (category.includes('rent') || category.includes('lease'))) {
-                   return { ...acc, balance: acc.balance + tx.amount };
-                }
+            // REVENUE (4000-4999)
+            if (isInc && accCode.startsWith('4')) {
+                if (accCode === '4000' && (cat.includes('wash') || desc.includes('wash'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '4100' && (cat.includes('wax') || cat.includes('polish'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '4200' && cat.includes('detailing')) return { ...acc, balance: acc.balance + amt };
+            }
 
-                // Priority 3: UTILITIES
-                else if ((acc.code === '5300' || accName.includes('utility')) && (category.includes('utility') || category.includes('power') || category.includes('water') || category.includes('electricity'))) {
-                   return { ...acc, balance: acc.balance + tx.amount };
-                }
+            // EXPENSES (5000-5999)
+            if (!isInc && accCode.startsWith('5')) {
+                // Block revenue leakage
+                if (cat.includes('wash') || cat.includes('detailing') || cat.includes('income')) return acc;
 
-                // Priority 4: CHEMICALS (Now strict - no broad catch-all)
-                else if ((acc.code === '5000' || accName.includes('chemical')) && 
-                         (category.includes('chemical') || category.includes('soap') || category.includes('wax') || category.includes('shampoo') || category.includes('material'))) {
-                   return { ...acc, balance: acc.balance + tx.amount };
-                }
-                
-                // Priority 5: INVENTORY ASSET
-                else if ((acc.code === '1200' || accName.includes('inventory')) && (category.includes('stock') || category.includes('inventory purchase'))) {
-                    return { ...acc, balance: acc.balance + tx.amount };
-                }
+                if (accCode === '5100' && (cat.includes('salary') || cat.includes('wage') || cat.includes('labor') || cat.includes('payroll'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '5400' && (cat.includes('legal') || cat.includes('consultant') || cat.includes('fee') || cat.includes('tax'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '5500' && (cat.includes('welfare') || cat.includes('incentive') || cat.includes('food'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '5600' && (cat.includes('stationery') || cat.includes('paper') || cat.includes('stamp'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '5700' && (cat.includes('transport') || cat.includes('petrol') || cat.includes('fuel'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '5300' && (cat.includes('water') || cat.includes('electricity') || cat.includes('power') || cat.includes('kseb'))) return { ...acc, balance: acc.balance + amt };
+                if (accCode === '5000' && (cat.includes('chemical') || cat.includes('consumable') || cat.includes('compound') || cat.includes('shampoo'))) return { ...acc, balance: acc.balance + amt };
             }
 
             return acc;
@@ -586,7 +577,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `tx-pay-${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
       type: 'EXPENSE',
-      category: 'Labor Expense',
+      category: 'Labor & Salaries',
       amount: totalPayroll,
       method: 'TRANSFER',
       description: `Staff Payroll Execution - ${payrollData.length} Employees (${month})`
