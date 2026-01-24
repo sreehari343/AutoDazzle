@@ -4,7 +4,7 @@ import { AIAnalysisResult, Transaction } from '../types.ts';
 import { useERP } from '../contexts/ERPContext.tsx';
 import { 
   Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
-  Wifi, ImageIcon, Copy, Sparkles, X, Code, Landmark, AlertCircle
+  Wifi, ImageIcon, Copy, Sparkles, X, Code, Landmark, AlertCircle, HelpCircle
 } from 'lucide-react';
 
 export const MigrationAssistant: React.FC = () => {
@@ -91,16 +91,15 @@ export const MigrationAssistant: React.FC = () => {
     alert('✅ Credentials Updated!');
   };
 
+  // ADVANCED CLEANER FOR RAW EXCEL DATA
   const cleanNum = (val: string) => {
-      if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
-      if (/[eE][+-]?\d+/.test(val)) return 0;
-      const cleaned = val.replace(/[^0-9.-]+/g, '');
+      if (!val || val.trim() === '' || val.trim() === '-' || val.includes('#')) return 0;
+      // Remove spaces, commas, quotes, and scientific notation symbols
+      const cleaned = val.replace(/[^\d.-]/g, '');
       const parsed = parseFloat(cleaned);
-      if (isFinite(parsed) && Math.abs(parsed) < 1000000) return parsed;
-      return 0;
+      return isFinite(parsed) ? parsed : 0;
   };
 
-  // NEW: Removes BOM and non-printable control characters that cause "unknown characters"
   const cleanStr = (str: string) => {
       if (!str) return '';
       return str
@@ -108,6 +107,21 @@ export const MigrationAssistant: React.FC = () => {
         .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove non-printable ASCII
         .replace(/^"|"$/g, '') // Remove surrounding quotes
         .trim();
+  };
+
+  const parseDate = (d: string) => {
+      if (!d) return new Date().toISOString().split('T')[0];
+      const cleaned = cleanStr(d);
+      // Handle DD/MM/YYYY or DD.MM.YYYY
+      if (cleaned.includes('/') || cleaned.includes('.')) {
+          const sep = cleaned.includes('/') ? '/' : '.';
+          const parts = cleaned.split(sep);
+          if (parts.length === 3) {
+              const [day, month, year] = parts;
+              return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          }
+      }
+      return cleaned; // Fallback to YYYY-MM-DD
   };
 
   const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -119,29 +133,27 @@ export const MigrationAssistant: React.FC = () => {
       reader.onload = async (event) => {
           let text = event.target?.result as string;
           
-          // Split rows and use a robust regex for CSV that handles commas inside quotes
           const rows = text.split(/\r?\n/).filter(r => r.trim()).map(line => {
+              // Handle complex quoting in CSV
               const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
               return matches ? matches.map(m => cleanStr(m)) : line.split(',').map(c => cleanStr(c));
           });
 
+          // Skip header and empty rows
           const dataRows = rows.filter(row => {
              if (row.length < 4) return false;
-             const fullRowText = row.join(' ').toLowerCase();
-             const isHeader = fullRowText.includes('acc') || fullRowText.includes('date');
-             const isSummary = fullRowText.includes('total') || 
-                               fullRowText.includes('balance') || 
-                               fullRowText.includes('summary') || 
-                               fullRowText.includes('b/f') || 
-                               fullRowText.includes('c/f');
-             return !isHeader && !isSummary && row[1];
+             const firstCol = row[0]?.toLowerCase() || '';
+             const isHeader = firstCol.includes('date') || firstCol.includes('account');
+             const hasData = row[1] || row[2];
+             return !isHeader && hasData;
           });
           
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
               // SEQUENCE: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
-              const date = row[0] || new Date().toISOString().split('T')[0];
+              const date = parseDate(row[0]);
               const accName = row[1] || 'Imported Entry';
+              const type = (row[2]?.toUpperCase() || 'EXPENSE') as any;
               const debit = cleanNum(row[3]);
               const credit = cleanNum(row[4]);
               const desc = row[5] || accName;
@@ -161,10 +173,10 @@ export const MigrationAssistant: React.FC = () => {
           });
 
           if (newTxs.length === 0) {
-              alert("No valid data found. Check Column 4 (Debit) and 5 (Credit).");
-          } else if (window.confirm(`Found ${newTxs.length} clean records. Import into Ledgers?`)) {
+              alert("No valid data found. Ensure your columns match the required sequence.");
+          } else if (window.confirm(`Detected ${newTxs.length} balance entries. Finalize import?`)) {
               bulkAddTransactions(newTxs);
-              alert(`Import Success! ${newTxs.length} records processed.`);
+              alert(`Success! Imported ${newTxs.length} ledger movements.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -270,23 +282,53 @@ export const MigrationAssistant: React.FC = () => {
 
       {activeTab === 'MIGRATION' && (
         <div className="space-y-6 text-black">
-            <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
-                <div className="flex items-center gap-3 mb-6">
-                    <Landmark className="text-indigo-600" size={28}/>
-                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Financial Master Importer</h4>
+            <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-xl flex flex-col lg:flex-row gap-8">
+                {/* Reference Helper */}
+                <div className="lg:w-96 shrink-0">
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight mb-4 flex items-center gap-2">
+                        <HelpCircle size={24}/> Ledger Format
+                    </h4>
+                    <p className="text-xs text-indigo-700 font-bold uppercase mb-4 tracking-widest">Excel Columns Required:</p>
+                    <div className="space-y-2">
+                        {[
+                            { c: 1, n: "Date", v: "01/11/2024" },
+                            { c: 2, n: "Acc Name", v: "Legal Expense" },
+                            { c: 3, n: "Acc Type", v: "Expense" },
+                            { c: 4, n: "Debit (Out)", v: "4,068.00" },
+                            { c: 5, n: "Credit (In)", v: "0" },
+                            { c: 6, n: "Description", v: "Municipality Charges" }
+                        ].map(item => (
+                            <div key={item.c} className="bg-white/60 p-2 rounded flex justify-between items-center text-[10px]">
+                                <span className="font-black text-indigo-400">COL {item.c}: {item.n}</span>
+                                <span className="font-mono text-slate-600">{item.v}</span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
-                
-                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm max-w-lg">
-                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> Zero-Error Financial Importer</h5>
-                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
-                        {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
-                        <span className="text-sm font-bold text-indigo-800">Select CSV Ledger</span>
-                        <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
-                    </label>
-                    <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
-                        <p className="text-[10px] font-black text-slate-400 uppercase mb-1">STRICT COLUMN SEQUENCE (6 COLS):</p>
-                        <p className="text-[9px] font-mono text-slate-600 leading-tight">Date, Acc Name, Acc Type, Debit, Credit, Description</p>
-                        <p className="text-[9px] font-bold text-blue-600 mt-2 uppercase">Shield Active: Strip non-printable characters & hidden BOM marks.</p>
+
+                {/* Import Box */}
+                <div className="flex-1">
+                    <div className="bg-white p-8 rounded-xl border border-indigo-100 shadow-xl max-w-xl">
+                        <div className="flex items-center gap-3 mb-6">
+                            <Landmark className="text-indigo-600" size={28}/>
+                            <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Financial Ledger Importer</h4>
+                        </div>
+                        
+                        <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-12 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
+                            {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={40}/>}
+                            <span className="text-sm font-black text-indigo-800 uppercase tracking-widest">Select CSV Ledger</span>
+                            <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
+                        </label>
+                        
+                        <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Safety Shield Active:</p>
+                            <ul className="text-[9px] text-slate-500 font-bold uppercase space-y-1">
+                                <li>• Supports DD/MM/YYYY and DD.MM.YYYY dates</li>
+                                <li>• Auto-strips commas/spaces from amounts</li>
+                                <li>• Preserves specific account names (e.g. Legal, Land)</li>
+                                <li>• Maps Staff Advances to Asset ledger</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -307,18 +349,6 @@ export const MigrationAssistant: React.FC = () => {
                     </div>
                 </div>
             </div>
-            {result && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
-                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800 shadow-xl overflow-hidden">
-                        <h5 className="text-amber-500 font-black text-[10px] uppercase mb-4 tracking-widest">Proposed Schema</h5>
-                        <pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap overflow-y-auto max-h-60">{result.proposedSchema}</pre>
-                    </div>
-                    <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-                         <h5 className="text-slate-800 font-black text-[10px] uppercase mb-4 tracking-widest">Migration Plan</h5>
-                         <div className="text-xs text-slate-600 whitespace-pre-wrap overflow-y-auto">{result.migrationPlan}</div>
-                    </div>
-                </div>
-            )}
         </div>
       )}
     </div>
