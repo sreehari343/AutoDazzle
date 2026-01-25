@@ -1,652 +1,281 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { 
-  MOCK_ACCOUNTS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_JOB_CARDS, 
-  MOCK_LEADS, MOCK_PURCHASES, MOCK_SERVICES, MOCK_STAFF, MOCK_TRANSACTIONS, MOCK_APPOINTMENTS,
-  LOGO_URL as DEFAULT_LOGO
-} from '../constants.ts';
-import { 
-  Customer, JobCard, InventoryItem, Staff, Service, Transaction, 
-  LedgerAccount, PurchaseOrder, Lead, Appointment, AccountType, StockTransaction, UserRole, PayrollRun
-} from '../types.ts';
+import React, { useState } from 'react';
+import { useERP } from '../contexts/ERPContext.tsx';
+import { X, Plus, Upload, Trash2, Edit, Search, FileSpreadsheet, Info, Car } from 'lucide-react';
+import { Service } from '../types.ts';
 
-interface ERPContextType {
-  currentUserRole: UserRole | null;
-  isAuthenticated: boolean;
-  login: (role: UserRole, password: string) => boolean;
-  logout: () => void;
-  updatePassword: (role: UserRole, newPass: string) => void;
-  logoUrl: string;
-  updateLogo: (url: string) => void;
-  customers: Customer[];
-  jobs: JobCard[];
-  inventory: InventoryItem[];
-  staff: Staff[];
-  services: Service[];
-  transactions: Transaction[];
-  accounts: LedgerAccount[];
-  purchases: PurchaseOrder[];
-  leads: Lead[];
-  appointments: Appointment[];
-  stockLogs: StockTransaction[]; 
-  payrollHistory: PayrollRun[];
-  isCloudConnected: boolean;
-  syncStatus: 'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR';
-  lastSyncError: string | null;
-  connectToCloud: (url: string, key: string) => Promise<boolean>;
-  syncAllLocalToCloud: () => Promise<void>;
-  addJob: (job: JobCard) => void;
-  updateJob: (job: JobCard) => void; 
-  deleteJob: (id: string) => void; 
-  updateJobStatus: (id: string, status: JobCard['status'], paymentMethod?: Transaction['method']) => void;
-  addStaff: (member: Staff) => void;
-  removeStaff: (id: string) => void;
-  updateStaff: (updatedStaff: Staff) => void;
-  addInventoryItem: (item: InventoryItem) => void;
-  deleteInventoryItem: (id: string) => void;
-  recordStockUsage: (itemId: string, quantity: number, notes: string) => void; 
-  bulkAddInventory: (items: InventoryItem[]) => void; 
-  addService: (service: Service) => void;
-  updateService: (service: Service) => void;
-  deleteService: (id: string) => void;
-  addCustomer: (customer: Customer) => void;
-  updateCustomer: (customer: Customer) => void;
-  addPurchase: (purchase: PurchaseOrder) => void;
-  addTransaction: (tx: Transaction) => void;
-  bulkAddTransactions: (txs: Transaction[], skipAutoOffset?: boolean) => void;
-  bulkAddPurchases: (pos: PurchaseOrder[]) => void;
-  executePayroll: (month: string, payrollData: any[]) => void;
-  bulkAddServices: (services: Service[]) => void;
-  restoreData: (data: any) => void;
-  resetToFactory: () => void;
-}
+// PRICING INPUT HELPER - MAXIMUM VISIBILITY
+const PricingField = ({ label, value, onChange }: { label: string, value: number, onChange: (val: number) => void }) => (
+  <div className="space-y-1">
+      <label className="text-[13px] font-black text-black uppercase block tracking-widest">{label} Rate</label>
+      <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-900 font-black">₹</span>
+          <input 
+              type="number" 
+              value={value === 0 ? '' : value} 
+              onChange={e => onChange(parseFloat(e.target.value) || 0)} 
+              className="w-full p-4 pl-10 border-2 border-black rounded-xl text-xl font-black text-black bg-white focus:ring-4 focus:ring-red-600/10 outline-none transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,0.1)]" 
+              placeholder="0.00"
+          />
+      </div>
+  </div>
+);
 
-const ERPContext = createContext<ERPContextType | undefined>(undefined);
-
-const getInitialData = <T,>(key: string, defaultData: T): T => {
-  try {
-    const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
-  } catch (e) { console.error(`Error loading ${key}`, e); }
-  return defaultData;
-};
-
-// --- DATABASE MAPPING UTILITIES ---
-const mapToDb = (table: string, data: any) => {
-    if (table === 'customers') return {
-        id: data.id, name: data.name, email: data.email, phone: data.phone, address: data.address,
-        lifetime_value: data.lifetimeValue, joined_date: data.joinedDate, visits: data.visits,
-        is_premium: data.isPremium, vehicles: data.vehicles
-    };
-    if (table === 'jobs') return {
-        id: data.id, ticket_number: data.ticketNumber, date: data.date, time_in: data.timeIn,
-        customer_id: data.customerId, segment: data.segment, service_ids: data.serviceIds,
-        assigned_staff_ids: data.assignedStaffIds, status: data.status, total: data.total,
-        tax: data.tax, notes: data.notes, payment_status: data.paymentStatus
-    };
-    if (table === 'staff') return {
-        id: data.id, name: data.name, role: data.role, email: data.email, phone: data.phone,
-        base_salary: data.baseSalary, active: data.active, joined_date: data.joinedDate,
-        current_advance: data.currentAdvance, loan_balance: data.loanBalance
-    };
-    if (table === 'transactions') return {
-        id: data.id, date: data.date, type: data.type, category: data.category,
-        amount: data.amount, method: data.method, description: data.description, reference_id: data.referenceId
-    };
-    if (table === 'inventory') return {
-        id: data.id, sku: data.sku, name: data.name, category: data.category, unit: data.unit,
-        quantity_on_hand: data.quantityOnHand, reorder_point: data.reorderPoint,
-        cost_per_unit: data.costPerUnit, supplier: data.supplier, last_restocked: data.lastRestocked
-    };
-    if (table === 'purchases') return {
-        id: data.id, date: data.date, doc_number: data.docNumber, vendor_name: data.vendorName,
-        item_name: data.itemName, quantity: data.quantity, unit: data.unit, rate: data.rate,
-        amount: data.amount, status: data.status, category: data.category
-    };
-    if (table === 'services') return {
-        id: data.id, sku: data.sku, name: data.name, category: data.category, 
-        duration_minutes: data.durationMinutes, base_price: data.basePrice, prices: data.prices
-    };
-    return data;
-};
-
-const mapFromDb = (table: string, data: any) => {
-    if (table === 'customers') return {
-        ...data, lifetimeValue: data.lifetime_value, joinedDate: data.joined_date, isPremium: data.is_premium
-    };
-    if (table === 'jobs') return {
-        ...data, ticketNumber: data.ticket_number, timeIn: data.time_in, customerId: data.customer_id,
-        serviceIds: data.service_ids, assignedStaffIds: data.assigned_staff_ids, paymentStatus: data.payment_status
-    };
-    if (table === 'staff') return {
-        ...data, baseSalary: data.base_salary, joinedDate: data.joined_date, 
-        currentAdvance: data.current_advance, loanBalance: data.loan_balance
-    };
-    if (table === 'transactions') return {
-        ...data, referenceId: data.reference_id
-    };
-    if (table === 'inventory') return {
-        ...data, quantityOnHand: data.quantity_on_hand, reorderPoint: data.reorder_point,
-        costPerUnit: data.cost_per_unit, lastRestocked: data.last_restocked
-    };
-    if (table === 'purchases') return {
-        ...data, docNumber: data.doc_number, vendorName: data.vendor_name, itemName: data.item_name
-    };
-    if (table === 'services') return {
-        ...data, durationMinutes: data.duration_minutes, basePrice: data.base_price
-    };
-    return data;
-};
-
-export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUserRole, setCurrentUserRole] = useState<UserRole | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passwords, setPasswords] = useState<Record<UserRole, string>>({
-    SUPER_ADMIN: localStorage.getItem('pass_super_admin') || 'admin',
-    STAFF: localStorage.getItem('pass_staff') || 'staff'
-  });
-
-  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
-  const [isCloudConnected, setIsCloudConnected] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR'>('OFFLINE');
-  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+export const Operations: React.FC = () => {
+  const { services, addService, updateService, deleteService, bulkAddServices, currentUserRole } = useERP();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [importText, setImportText] = useState('');
   
-  const [logoUrl, setLogoUrl] = useState<string>(() => localStorage.getItem('erp_logo') || DEFAULT_LOGO);
-  const [customers, setCustomers] = useState<Customer[]>(() => getInitialData('erp_customers', MOCK_CUSTOMERS));
-  const [jobs, setJobs] = useState<JobCard[]>(() => getInitialData('erp_jobs', MOCK_JOB_CARDS));
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => getInitialData('erp_inventory', MOCK_INVENTORY));
-  const [staff, setStaff] = useState<Staff[]>(() => getInitialData('erp_staff', MOCK_STAFF));
-  const [services, setServices] = useState<Service[]>(() => getInitialData('erp_services', MOCK_SERVICES));
-  const [transactions, setTransactions] = useState<Transaction[]>(() => getInitialData('erp_transactions', MOCK_TRANSACTIONS));
-  const [accounts, setAccounts] = useState<LedgerAccount[]>(() => getInitialData('erp_accounts', MOCK_ACCOUNTS)); 
-  const [purchases, setPurchases] = useState<PurchaseOrder[]>(() => getInitialData('erp_purchases', MOCK_PURCHASES));
-  const [leads, setLeads] = useState<Lead[]>(() => getInitialData('erp_leads', MOCK_LEADS));
-  const [appointments, setAppointments] = useState<Appointment[]>(() => getInitialData('erp_appointments', MOCK_APPOINTMENTS));
-  const [stockLogs, setStockLogs] = useState<StockTransaction[]>(() => getInitialData('erp_stock_logs', []));
-  const [payrollHistory, setPayrollHistory] = useState<PayrollRun[]>(() => getInitialData('erp_payroll_history', []));
+  const canEdit = currentUserRole !== 'STAFF';
 
-  const pushToCloud = useCallback(async (table: string, data: any) => {
-    if (!supabase || !isCloudConnected) return;
-    try {
-      setSyncStatus('SYNCING');
-      const dbPayload = mapToDb(table, data);
-      const { error } = await supabase.from(table).upsert(dbPayload);
-      if (error) throw error;
-      setSyncStatus('SYNCED');
-      setLastSyncError(null);
-    } catch (err: any) {
-      console.error(`Supabase Push Error [${table}]:`, err.message);
-      setSyncStatus('ERROR');
-    }
-  }, [supabase, isCloudConnected]);
-
-  const removeFromCloud = useCallback(async (table: string, id: string) => {
-    if (!supabase || !isCloudConnected) return;
-    try {
-      setSyncStatus('SYNCING');
-      const { error } = await supabase.from(table).delete().eq('id', id);
-      if (error) throw error;
-      setSyncStatus('SYNCED');
-    } catch (err: any) {
-      console.error(`Supabase Delete Error [${table}]:`, err.message);
-      setSyncStatus('ERROR');
-    }
-  }, [supabase, isCloudConnected]);
-
-  const pullFromCloud = useCallback(async (client: SupabaseClient) => {
-      try {
-          setSyncStatus('SYNCING');
-          const [cRes, jRes, sRes, tRes, iRes, pRes, svcRes] = await Promise.all([
-              client.from('customers').select('*'),
-              client.from('jobs').select('*'),
-              client.from('staff').select('*'),
-              client.from('transactions').select('*'),
-              client.from('inventory').select('*'),
-              client.from('purchases').select('*'),
-              client.from('services').select('*')
-          ]);
-
-          if (cRes.data) setCustomers(cRes.data.map(d => mapFromDb('customers', d)));
-          if (jRes.data) setJobs(jRes.data.map(d => mapFromDb('jobs', d)));
-          if (sRes.data) setStaff(sRes.data.map(d => mapFromDb('staff', d)));
-          if (tRes.data) setTransactions(tRes.data.map(d => mapFromDb('transactions', d)));
-          if (iRes.data) setInventory(iRes.data.map(d => mapFromDb('inventory', d)));
-          if (pRes.data) setPurchases(pRes.data.map(d => mapFromDb('purchases', d)));
-          if (svcRes.data) setServices(svcRes.data.map(d => mapFromDb('services', d)));
-
-          setSyncStatus('SYNCED');
-          setLastSyncError(null);
-      } catch (err: any) {
-          console.error("Supabase Pull Error:", err.message);
-          setSyncStatus('ERROR');
-      }
-  }, []);
-
-  const syncAllLocalToCloud = async () => {
-      if (!supabase || !isCloudConnected) return;
-      try {
-          setSyncStatus('SYNCING');
-          await Promise.all([
-            supabase.from('customers').upsert(customers.map(c => mapToDb('customers', c))),
-            supabase.from('jobs').upsert(jobs.map(j => mapToDb('jobs', j))),
-            supabase.from('staff').upsert(staff.map(s => mapToDb('staff', s))),
-            supabase.from('transactions').upsert(transactions.map(t => mapToDb('transactions', t))),
-            supabase.from('inventory').upsert(inventory.map(i => mapToDb('inventory', i))),
-            supabase.from('purchases').upsert(purchases.map(p => mapToDb('purchases', p))),
-            supabase.from('services').upsert(services.map(s => mapToDb('services', s)))
-          ]);
-          setSyncStatus('SYNCED');
-          alert("Manual sync complete.");
-      } catch (err: any) {
-          console.error("Manual Sync Error:", err);
-          setSyncStatus('ERROR');
-      }
+  const initialFormState = {
+    sku: '', name: '', category: 'WASHING' as Service['category'], duration: 30,
+    price_HATCHBACK: 0, price_SEDAN: 0, price_SUV_MUV: 0, price_LUXURY: 0
   };
 
-  useEffect(() => {
-    const savedUrl = localStorage.getItem('supabase_url');
-    const savedKey = localStorage.getItem('supabase_key');
-    if (savedUrl && savedKey) initSupabase(savedUrl, savedKey);
-    
-    const sessionRole = sessionStorage.getItem('erp_session_role');
-    if (sessionRole) {
-      setCurrentUserRole(sessionRole as UserRole);
-      setIsAuthenticated(true);
-    }
-  }, []);
+  const [formData, setFormData] = useState(initialFormState);
 
-  const login = (role: UserRole, password: string) => {
-    if (passwords[role] === password) {
-      setCurrentUserRole(role);
-      setIsAuthenticated(true);
-      sessionStorage.setItem('erp_session_role', role);
-      return true;
-    }
-    return false;
+  const filteredServices = services.filter(s => 
+      s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      s.sku.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleOpenAdd = () => {
+    if (!canEdit) return;
+    setEditingId(null); 
+    setFormData(initialFormState); 
+    setIsModalOpen(true);
   };
 
-  const logout = () => {
-    setCurrentUserRole(null);
-    setIsAuthenticated(false);
-    sessionStorage.removeItem('erp_session_role');
-  };
-
-  const updatePassword = (role: UserRole, newPass: string) => {
-    setPasswords(prev => ({ ...prev, [role]: newPass }));
-    localStorage.setItem(`pass_${role.toLowerCase()}`, newPass);
-  };
-
-  const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
-
-  const initSupabase = async (url: string, key: string) => {
-    try {
-      setSyncStatus('SYNCING');
-      const client = createClient(url, key);
-      const { error } = await client.from('staff').select('id').limit(1);
-      if (error) throw error;
-      setSupabase(client);
-      setIsCloudConnected(true);
-      setSyncStatus('SYNCED');
-      await pullFromCloud(client);
-    } catch (err: any) {
-      console.error("Initialization failed:", err.message);
-      setSyncStatus('ERROR');
-      setIsCloudConnected(false);
-    }
-  };
-
-  const updateLogo = (url: string) => {
-    setLogoUrl(url);
-    localStorage.setItem('erp_logo', url);
-  };
-
-  const addJob = (job: JobCard) => {
-    const updated = [...jobs, job];
-    setJobs(updated);
-    persist('erp_jobs', updated);
-    pushToCloud('jobs', job);
-  };
-
-  const updateJob = (job: JobCard) => {
-    const updated = jobs.map(j => j.id === job.id ? job : j);
-    setJobs(updated);
-    persist('erp_jobs', updated);
-    pushToCloud('jobs', job);
-  };
-
-  const deleteJob = (id: string) => {
-    const updated = jobs.filter(j => j.id !== id);
-    setJobs(updated);
-    persist('erp_jobs', updated);
-    removeFromCloud('jobs', id);
-  };
-
-  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod: Transaction['method'] = 'CASH') => {
-    const updatedJobs = jobs.map(j => {
-      if (j.id === id) {
-        if (status === 'INVOICED' && j.status !== 'INVOICED') {
-          const tx: Transaction = {
-            id: `tx-sale-${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
-            type: 'INCOME',
-            category: 'Service Sales',
-            amount: j.total,
-            method: paymentMethod,
-            referenceId: j.id,
-            description: `Invoice ${j.ticketNumber} Payment (${paymentMethod})`
-          };
-          addTransaction(tx);
-          setCustomers(prevCustomers => {
-            const updatedCusts = prevCustomers.map(c => {
-               if (c.id === j.customerId) {
-                 const nc = { ...c, visits: c.visits + 1, lifetimeValue: c.lifetimeValue + j.total };
-                 pushToCloud('customers', nc);
-                 return nc;
-               }
-               return c;
-            });
-            persist('erp_customers', updatedCusts);
-            return updatedCusts;
-          });
-        }
-        const updatedJob = { ...j, status };
-        pushToCloud('jobs', updatedJob);
-        return updatedJob;
-      }
-      return j;
+  const handleOpenEdit = (service: Service) => {
+    if (!canEdit) return;
+    setEditingId(service.id);
+    setFormData({
+      sku: service.sku, 
+      name: service.name, 
+      category: service.category, 
+      duration: service.durationMinutes,
+      price_HATCHBACK: service.prices.HATCHBACK || 0,
+      price_SEDAN: service.prices.SEDAN || 0,
+      price_SUV_MUV: service.prices.SUV_MUV || 0,
+      price_LUXURY: service.prices.LUXURY || 0
     });
-    setJobs(updatedJobs);
-    persist('erp_jobs', updatedJobs);
+    setIsModalOpen(true);
   };
 
-  const addStaff = (member: Staff) => {
-    const updated = [...staff, member];
-    setStaff(updated);
-    persist('erp_staff', updated);
-    pushToCloud('staff', member);
+  const handleDelete = (id: string) => {
+    if (!canEdit) return;
+    if (window.confirm("Confirm: Permanently delete this service?")) deleteService(id);
   };
 
-  const removeStaff = (id: string) => {
-    const updated = staff.filter(s => s.id !== id);
-    setStaff(updated);
-    persist('erp_staff', updated);
-    removeFromCloud('staff', id);
-  };
-
-  const updateStaff = (updatedStaff: Staff) => {
-    const updated = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
-    setStaff(updated);
-    persist('erp_staff', updated);
-    pushToCloud('staff', updatedStaff);
-  };
-
-  const addCustomer = (customer: Customer) => {
-    const updated = [...customers, customer];
-    setCustomers(updated);
-    persist('erp_customers', updated);
-    pushToCloud('customers', customer);
-  };
-
-  const updateCustomer = (updatedCustomer: Customer) => {
-    const updated = customers.map(c => c.id === updatedCustomer.id ? updatedCustomer : c);
-    setCustomers(updated);
-    persist('erp_customers', updated);
-    pushToCloud('customers', updatedCustomer);
-  };
-
-  const addPurchase = (purchase: PurchaseOrder) => {
-    const updatedPurchases = [...purchases, purchase];
-    setPurchases(updatedPurchases);
-    persist('erp_purchases', updatedPurchases);
-    pushToCloud('purchases', purchase);
-
-    if (purchase.category === 'INVENTORY') {
-       const existingItem = inventory.find(i => i.name === purchase.itemName);
-       if(existingItem) {
-          setInventory(currentInventory => {
-             const updatedInv = currentInventory.map(i => {
-                if (i.id === existingItem.id) {
-                   const ni = { ...i, quantityOnHand: i.quantityOnHand + purchase.quantity, lastRestocked: purchase.date };
-                   pushToCloud('inventory', ni);
-                   return ni;
-                }
-                return i;
-             });
-             persist('erp_inventory', updatedInv);
-             return updatedInv;
-          });
-       }
-    }
-
-    const tx: Transaction = {
-      id: `tx-pur-${Date.now()}`,
-      date: purchase.date,
-      type: 'EXPENSE',
-      category: purchase.category === 'INVENTORY' ? 'Inventory Purchase' : 'Operating Expense',
-      amount: purchase.amount,
-      method: 'TRANSFER',
-      referenceId: purchase.id,
-      description: `Purchase: ${purchase.itemName} from ${purchase.vendorName}`
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const servicePayload: Service = {
+      id: editingId || `s-${Date.now()}`,
+      sku: formData.sku || `SVC-${services.length + 1}`,
+      name: formData.name,
+      basePrice: formData.price_HATCHBACK, 
+      prices: {
+        HATCHBACK: formData.price_HATCHBACK, 
+        SEDAN: formData.price_SEDAN, 
+        SUV_MUV: formData.price_SUV_MUV, 
+        LUXURY: formData.price_LUXURY,
+        AUTORICKSHAW: 0, AUTOTAXI: 0, BIKE: 0, SCOOTY: 0, BULLET: 0, PICKUP_SMALL: 0, PICKUP_LARGE: 0
+      },
+      durationMinutes: formData.duration, 
+      category: formData.category
     };
-    addTransaction(tx);
+    editingId ? updateService(servicePayload) : addService(servicePayload);
+    setIsModalOpen(false);
   };
 
-  const bulkAddPurchases = (pos: PurchaseOrder[]) => {
-      const updated = [...purchases, ...pos];
-      setPurchases(updated);
-      persist('erp_purchases', updated);
-      pos.forEach(p => pushToCloud('purchases', p));
+  const cleanNum = (val: string) => {
+    if (!val || val.trim() === '') return 0;
+    const cleaned = val.replace(/[^0-9.-]+/g, '');
+    return parseFloat(cleaned) || 0;
   };
 
-  const addTransaction = (tx: Transaction) => {
-    const newTx = [...transactions, tx];
-    setTransactions(newTx);
-    persist('erp_transactions', newTx);
-    updateLedger([tx]);
-    pushToCloud('transactions', tx);
-  };
-
-  const bulkAddTransactions = (txs: Transaction[], skipAutoOffset: boolean = false) => {
-    const newTx = [...transactions, ...txs];
-    setTransactions(newTx);
-    persist('erp_transactions', newTx);
-    updateLedger(txs, skipAutoOffset);
-    txs.forEach(t => pushToCloud('transactions', t));
-  };
-
-  const updateLedger = (newTransactions: Transaction[], skipAutoOffset: boolean = false) => {
-    setAccounts(prev => {
-      let updatedAccounts = [...prev];
-      newTransactions.forEach(tx => {
-         updatedAccounts = updatedAccounts.map(acc => {
-            // IF MANUAL ENTRY (NOT BULK IMPORT LEGACY): Auto-offset Cash
-            if (!skipAutoOffset) {
-                if (acc.code === '1000') {
-                  if (tx.type === 'INCOME') return { ...acc, balance: acc.balance + tx.amount };
-                  if (tx.type === 'EXPENSE') return { ...acc, balance: acc.balance - tx.amount };
-                }
-            }
-
-            // Always update the specific revenue/expense accounts
-            if (tx.type === 'INCOME' && acc.code === '4000') return { ...acc, balance: acc.balance + tx.amount };
-            if (tx.type === 'EXPENSE') {
-               const cat = tx.category.toLowerCase();
-               if (acc.code === '1200' && (cat.includes('inventory') || cat.includes('stock'))) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5100' && (cat.includes('labor') || cat.includes('payroll') || cat.includes('salary'))) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5200' && cat.includes('rent')) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5300' && (cat.includes('utility') || cat.includes('power') || cat.includes('water'))) return { ...acc, balance: acc.balance + tx.amount };
-               else if (acc.code === '5000' && !cat.includes('labor') && !cat.includes('rent') && !cat.includes('utility') && !cat.includes('inventory')) return { ...acc, balance: acc.balance + tx.amount };
-               
-               // If bulk importing specific accounts:
-               if (skipAutoOffset && acc.name.toLowerCase() === tx.category.toLowerCase()) {
-                   return { ...acc, balance: acc.balance + tx.amount };
-               }
-            }
-            return acc;
-         });
-      });
-      return updatedAccounts;
+  const handleBulkImport = () => {
+    const lines = importText.split('\n').filter(l => l.trim() && !l.toLowerCase().includes('name'));
+    const imported: Service[] = lines.map((line, idx) => {
+      const p = line.split(',').map(s => s.trim());
+      return {
+          id: `si-${Date.now()}-${idx}`,
+          sku: `SVC-${1000 + idx + services.length}`,
+          name: p[0] || 'Imported Service',
+          category: 'WASHING', 
+          basePrice: cleanNum(p[1]),
+          durationMinutes: 30,
+          prices: {
+              HATCHBACK: cleanNum(p[1]),
+              SEDAN: cleanNum(p[2]),
+              SUV_MUV: cleanNum(p[3]),
+              LUXURY: cleanNum(p[4]),
+              BIKE: 0, SCOOTY: 0, BULLET: 0, AUTORICKSHAW: 0, AUTOTAXI: 0, PICKUP_SMALL: 0, PICKUP_LARGE: 0
+          }
+      };
     });
-  };
-
-  const executePayroll = (month: string, payrollData: any[]) => {
-    const totalPayroll = payrollData.reduce((sum, p) => sum + p.netPay, 0);
-    const tx: Transaction = {
-      id: `tx-pay-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
-      type: 'EXPENSE',
-      category: 'Labor Expense',
-      amount: totalPayroll,
-      method: 'TRANSFER',
-      description: `Staff Payroll Execution - ${payrollData.length} Employees (${month})`
-    };
-    addTransaction(tx);
-    setStaff(prevStaff => {
-        const updatedStaff = prevStaff.map(s => {
-            const record = payrollData.find((p: any) => p.id === s.id);
-            if (!record || !record.deductionsObj) return s;
-            const ns = {
-                ...s,
-                loanBalance: Math.max(0, s.loanBalance - (record.deductionsObj.loan || 0)),
-                currentAdvance: Math.max(0, s.currentAdvance - (record.deductionsObj.advance || 0))
-            };
-            pushToCloud('staff', ns);
-            return ns;
-        });
-        persist('erp_staff', updatedStaff);
-        return updatedStaff;
-    });
-    const runSnapshot: PayrollRun = {
-      id: `pr-${month}-${Date.now()}`,
-      month: month,
-      dateGenerated: new Date().toISOString(),
-      totalAmount: totalPayroll,
-      records: payrollData,
-      status: 'FINALIZED'
-    };
-    setPayrollHistory(prev => {
-      const updated = [...prev.filter(p => p.month !== month), runSnapshot];
-      persist('erp_payroll_history', updated);
-      return updated;
-    });
-  };
-
-  const addInventoryItem = (item: InventoryItem) => {
-    const updated = [...inventory, item];
-    setInventory(updated);
-    persist('erp_inventory', updated);
-    pushToCloud('inventory', item);
-  };
-
-  const deleteInventoryItem = (id: string) => {
-    const updated = inventory.filter(i => i.id !== id);
-    setInventory(updated);
-    persist('erp_inventory', updated);
-    removeFromCloud('inventory', id);
-  };
-
-  const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
-      setInventory(currentInventory => {
-          const updated = currentInventory.map(i => {
-              if (i.id === itemId) {
-                  const ni = { ...i, quantityOnHand: Math.max(0, (i.quantityOnHand || 0) - quantity) };
-                  pushToCloud('inventory', ni);
-                  return ni;
-              }
-              return i;
-          });
-          persist('erp_inventory', updated);
-          return updated;
-      });
-      setStockLogs(prev => {
-          const log = { id: `stx-${Date.now()}`, itemId, date: new Date().toISOString().split('T')[0], type: 'USAGE' as const, quantity, notes };
-          const newLogs = [...prev, log];
-          persist('erp_stock_logs', newLogs);
-          return newLogs;
-      });
-  };
-
-  const bulkAddInventory = (items: InventoryItem[]) => {
-      setInventory(prev => {
-         const updated = [...prev, ...items];
-         persist('erp_inventory', updated);
-         return updated;
-      });
-      items.forEach(i => pushToCloud('inventory', i));
-  };
-
-  const addService = (service: Service) => {
-    const updated = [...services, service];
-    setServices(updated);
-    persist('erp_services', updated);
-    pushToCloud('services', service);
-  };
-
-  const updateService = (service: Service) => {
-    const updated = services.map(s => s.id === service.id ? service : s);
-    setServices(updated);
-    persist('erp_services', updated);
-    pushToCloud('services', service);
-  };
-
-  const deleteService = (id: string) => {
-    const updated = services.filter(s => s.id !== id);
-    setServices(updated);
-    persist('erp_services', updated);
-    removeFromCloud('services', id);
-  };
-
-  const bulkAddServices = (newServices: Service[]) => {
-    const updated = [...services, ...newServices];
-    setServices(updated);
-    persist('erp_services', updated);
-    newServices.forEach(s => pushToCloud('services', s));
-  };
-
-  const connectToCloud = async (url: string, key: string): Promise<boolean> => {
-    localStorage.setItem('supabase_url', url);
-    localStorage.setItem('supabase_key', key);
-    await initSupabase(url, key);
-    return true;
-  };
-  
-  const restoreData = (data: any) => {
-    if (data.modules) {
-      setCustomers(data.modules.customers || []);
-      setJobs(data.modules.jobs || []);
-      setStaff(data.modules.staff || []);
-      setTransactions(data.modules.transactions || []);
-      setInventory(data.modules.inventory || []);
-      setServices(data.modules.services || []);
-      setAccounts(data.modules.financials || MOCK_ACCOUNTS);
-      setPayrollHistory(data.modules.payrollHistory || []);
-      alert('System Data Restored Successfully.');
-    }
-  };
-
-  const resetToFactory = () => {
-    if (window.confirm("WARNING: Wipe all data? This cannot be undone.")) {
-      localStorage.clear();
-      window.location.reload();
-    }
+    bulkAddServices(imported);
+    setIsImportOpen(false);
+    setImportText('');
+    alert(`Successfully imported ${imported.length} services.`);
   };
 
   return (
-    <ERPContext.Provider value={{
-      currentUserRole, isAuthenticated, login, logout, updatePassword,
-      logoUrl, updateLogo,
-      customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
-      isCloudConnected, syncStatus, lastSyncError, connectToCloud, syncAllLocalToCloud,
-      addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
-      addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, addCustomer, updateCustomer, addPurchase, addTransaction, bulkAddTransactions, bulkAddPurchases, executePayroll
-    }}>
-      {children}
-    </ERPContext.Provider>
-  );
-};
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-slate-200 gap-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Service Catalog</h2>
+          <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Master Pricing Engine</p>
+        </div>
+        <div className="relative flex-1 max-w-sm">
+             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
+             <input type="text" placeholder="Filter packages..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-3 border-2 border-slate-200 rounded-lg text-sm bg-slate-50 text-black font-bold outline-none focus:border-red-600 transition-all" />
+        </div>
+        <div className="flex gap-2">
+          {canEdit && (
+             <>
+                <button onClick={() => setIsImportOpen(true)} className="bg-white border-2 border-slate-200 text-slate-700 px-4 py-2.5 rounded-lg text-[10px] font-black shadow-sm flex items-center uppercase hover:bg-slate-50 transition-all tracking-wider"><Upload size={14} className="mr-2" /> Bulk CSV</button>
+                <button onClick={handleOpenAdd} className="bg-red-600 text-white px-5 py-2.5 rounded-lg text-[10px] font-black shadow-lg flex items-center uppercase hover:bg-red-700 transition-all tracking-wider"><Plus size={16} className="mr-2" /> New Package</button>
+             </>
+          )}
+        </div>
+      </div>
 
-export const useERP = () => {
-  const context = useContext(ERPContext);
-  if (context === undefined) throw new Error('useERP must be used within an ERPProvider');
-  return context;
+      <div className="bg-white rounded-xl shadow-sm border-2 border-slate-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left whitespace-nowrap">
+            <thead className="bg-slate-900 text-white border-b border-slate-800">
+              <tr>
+                <th className="px-6 py-4 font-black uppercase text-[10px] tracking-widest">Package Details</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Hatchback</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Sedan</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">SUV / MUV</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-red-900/50">Premium</th>
+                {canEdit && <th className="px-6 py-4 font-black uppercase text-[10px] tracking-widest text-center">Manage</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredServices.map((s) => (
+                <tr key={s.id} className="hover:bg-slate-50 transition-colors group">
+                  <td className="px-6 py-4">
+                    <div className="font-black text-slate-900 text-sm uppercase">{s.name}</div>
+                    <div className="text-[10px] text-slate-400 font-mono uppercase tracking-tighter">{s.sku}</div>
+                  </td>
+                  <td className="px-4 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.HATCHBACK?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.SEDAN?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.SUV_MUV?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-red-50/30 font-black text-red-700">₹{s.prices.LUXURY?.toLocaleString() || 0}</td>
+                  {canEdit && (
+                      <td className="px-6 py-4">
+                          <div className="flex justify-center gap-2">
+                            <button onClick={() => handleOpenEdit(s)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-all shadow-sm border border-blue-100"><Edit size={16}/></button>
+                            <button onClick={() => handleDelete(s.id)} className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all shadow-sm border border-red-100"><Trash2 size={16}/></button>
+                          </div>
+                      </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      {/* EDIT MODAL - MAXIMUM CONTRAST OVERHAUL */}
+      {isModalOpen && (
+          <div className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden text-black border-8 border-black animate-fade-in-up">
+                  <div className="p-8 border-b-8 border-slate-50 flex justify-between items-center bg-white">
+                      <div>
+                          <h3 className="text-3xl font-black text-black uppercase tracking-tighter leading-tight">{editingId ? 'Edit Package Rates' : 'Create New Package'}</h3>
+                          <p className="text-[12px] font-black text-slate-500 uppercase tracking-[0.3em] mt-1">Universal Service Pricing Module</p>
+                      </div>
+                      <button onClick={() => setIsModalOpen(false)} className="p-4 bg-slate-100 rounded-2xl text-black border-2 border-black hover:bg-red-600 hover:text-white transition-all shadow-md"><X size={32}/></button>
+                  </div>
+                  <form onSubmit={handleSubmit} className="p-10 space-y-10 bg-white">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-2">
+                              <label className="text-[13px] font-black text-black uppercase block tracking-widest">Service Title</label>
+                              <input 
+                                required 
+                                value={formData.name} 
+                                onChange={e => setFormData({...formData, name: e.target.value})} 
+                                className="w-full p-5 border-2 border-black rounded-2xl text-xl font-black text-black bg-white focus:ring-4 focus:ring-red-600/5 outline-none shadow-[4px_4px_0px_0px_rgba(0,0,0,0.1)]" 
+                                placeholder="e.g. Foam Wash Deluxe"
+                              />
+                          </div>
+                          <div className="space-y-2">
+                              <label className="text-[13px] font-black text-black uppercase block tracking-widest">SKU Record Code</label>
+                              <input 
+                                placeholder="AUTO-GENERATED" 
+                                value={formData.sku} 
+                                onChange={e => setFormData({...formData, sku: e.target.value})} 
+                                className="w-full p-5 border-2 border-slate-200 rounded-2xl text-xl font-mono font-black text-slate-500 bg-slate-50" 
+                              />
+                          </div>
+                      </div>
+
+                      <div className="bg-white p-10 rounded-3xl border-4 border-slate-100 space-y-8 shadow-inner relative">
+                          <div className="absolute -top-4 left-8 px-6 py-1.5 bg-black text-white text-[11px] font-black uppercase tracking-[0.4em] rounded-full">Rate Table</div>
+                          <h4 className="text-[13px] font-black text-black uppercase tracking-widest flex items-center gap-3 border-b-2 border-slate-200 pb-6">
+                             <Car size={24} className="text-red-600"/> PRICING PER SEGMENT (INR)
+                          </h4>
+                          <div className="grid grid-cols-2 gap-x-12 gap-y-8">
+                              <PricingField label="Hatchback" value={formData.price_HATCHBACK} onChange={(val) => setFormData({...formData, price_HATCHBACK: val})} />
+                              <PricingField label="Sedan" value={formData.price_SEDAN} onChange={(val) => setFormData({...formData, price_SEDAN: val})} />
+                              <PricingField label="SUV / MUV" value={formData.price_SUV_MUV} onChange={(val) => setFormData({...formData, price_SUV_MUV: val})} />
+                              <PricingField label="Premium" value={formData.price_LUXURY} onChange={(val) => setFormData({...formData, price_LUXURY: val})} />
+                          </div>
+                      </div>
+
+                      <div className="flex gap-6">
+                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-5 border-4 border-black rounded-2xl text-xs font-black uppercase text-black bg-white hover:bg-slate-50 transition-all">Abort Changes</button>
+                          <button type="submit" className="flex-[2] py-5 bg-black text-white rounded-2xl text-base font-black uppercase shadow-2xl hover:bg-red-700 hover:border-red-800 transition-all transform hover:-translate-y-1 active:translate-y-0 tracking-[0.3em] border-b-8 border-black/20">
+                              {editingId ? 'Push Updates Now' : 'Finalize New Service'}
+                          </button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
+
+      {/* BULK IMPORT MODAL */}
+      {isImportOpen && canEdit && (
+          <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl text-black border-4 border-indigo-900 animate-fade-in-up">
+                  <div className="p-8 border-b-2 border-slate-100 flex justify-between items-center bg-slate-50">
+                      <h3 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-2"><FileSpreadsheet size={24}/> Service Batch Importer</h3>
+                      <button onClick={() => setIsImportOpen(false)} className="p-2 bg-white rounded-full text-slate-500 border border-slate-200 hover:text-red-500 transition-all shadow-sm"><X size={24}/></button>
+                  </div>
+                  <div className="p-10">
+                      <div className="p-6 rounded-2xl mb-8 border-2 border-indigo-100 bg-indigo-50/50">
+                          <div className="flex justify-between items-start mb-4">
+                              <h4 className="text-[11px] font-black uppercase text-indigo-800 flex items-center gap-2 tracking-widest"><Info size={14}/> Column Sequence (5 Cols)</h4>
+                              <button onClick={() => {
+                                  navigator.clipboard.writeText("Foam Wash, 350, 450, 600, 1000");
+                                  alert("Copied to clipboard!");
+                              }} className="text-[10px] bg-white border-2 border-indigo-200 px-4 py-1.5 rounded-lg font-black uppercase hover:bg-indigo-600 hover:text-white transition-all shadow-md">Copy Sample</button>
+                          </div>
+                          <code className="block bg-white p-4 rounded-xl text-xs font-mono text-slate-700 border-2 border-indigo-100 shadow-inner">
+                             Name, Hatchback Rate, Sedan Rate, SUV Rate, Premium Rate
+                          </code>
+                      </div>
+                      <textarea 
+                        className="w-full h-56 p-5 border-2 border-slate-300 rounded-2xl font-mono text-sm focus:border-indigo-600 outline-none text-black bg-white shadow-inner" 
+                        placeholder="Foam Wash Deluxe, 300, 400, 500, 800" 
+                        value={importText} 
+                        onChange={e => setImportText(e.target.value)} 
+                      />
+                      <div className="mt-8 flex gap-6">
+                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-4 border-2 border-slate-300 rounded-2xl text-xs font-black uppercase text-slate-500 bg-white">Cancel</button>
+                          <button onClick={handleBulkImport} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase shadow-xl hover:bg-indigo-700 transition-all tracking-widest">Begin Bulk Import</button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+    </div>
+  );
 };
