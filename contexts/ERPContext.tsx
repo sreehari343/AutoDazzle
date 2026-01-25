@@ -53,7 +53,7 @@ interface ERPContextType {
   updateCustomer: (customer: Customer) => void;
   addPurchase: (purchase: PurchaseOrder) => void;
   addTransaction: (tx: Transaction) => void;
-  bulkAddTransactions: (txs: Transaction[]) => void;
+  bulkAddTransactions: (txs: Transaction[], skipAutoOffset?: boolean) => void;
   bulkAddPurchases: (pos: PurchaseOrder[]) => void;
   executePayroll: (month: string, payrollData: any[]) => void;
   bulkAddServices: (services: Service[]) => void;
@@ -86,7 +86,7 @@ const mapToDb = (table: string, data: any) => {
     };
     if (table === 'staff') return {
         id: data.id, name: data.name, role: data.role, email: data.email, phone: data.phone,
-        base_salary: data.baseSalary, active: data.active, joined_date: data.joined_date,
+        base_salary: data.baseSalary, active: data.active, joined_date: data.joinedDate,
         current_advance: data.currentAdvance, loan_balance: data.loanBalance
     };
     if (table === 'transactions') return {
@@ -165,7 +165,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [stockLogs, setStockLogs] = useState<StockTransaction[]>(() => getInitialData('erp_stock_logs', []));
   const [payrollHistory, setPayrollHistory] = useState<PayrollRun[]>(() => getInitialData('erp_payroll_history', []));
 
-  // --- Cloud Sync Engine ---
   const pushToCloud = useCallback(async (table: string, data: any) => {
     if (!supabase || !isCloudConnected) return;
     try {
@@ -178,7 +177,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err: any) {
       console.error(`Supabase Push Error [${table}]:`, err.message);
       setSyncStatus('ERROR');
-      setLastSyncError(`Push failed: ${err.message}`);
     }
   }, [supabase, isCloudConnected]);
 
@@ -189,7 +187,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) throw error;
       setSyncStatus('SYNCED');
-      setLastSyncError(null);
     } catch (err: any) {
       console.error(`Supabase Delete Error [${table}]:`, err.message);
       setSyncStatus('ERROR');
@@ -209,48 +206,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               client.from('services').select('*')
           ]);
 
-          if (cRes.data) {
-              const mapped = cRes.data.map(d => mapFromDb('customers', d));
-              setCustomers(mapped);
-              persist('erp_customers', mapped);
-          }
-          if (jRes.data) {
-              const mapped = jRes.data.map(d => mapFromDb('jobs', d));
-              setJobs(mapped);
-              persist('erp_jobs', mapped);
-          }
-          if (sRes.data) {
-              const mapped = sRes.data.map(d => mapFromDb('staff', d));
-              setStaff(mapped);
-              persist('erp_staff', mapped);
-          }
-          if (tRes.data) {
-              const mapped = tRes.data.map(d => mapFromDb('transactions', d));
-              setTransactions(mapped);
-              persist('erp_transactions', mapped);
-          }
-          if (iRes.data) {
-              const mapped = iRes.data.map(d => mapFromDb('inventory', d));
-              setInventory(mapped);
-              persist('erp_inventory', mapped);
-          }
-          if (pRes.data) {
-              const mapped = pRes.data.map(d => mapFromDb('purchases', d));
-              setPurchases(mapped);
-              persist('erp_purchases', mapped);
-          }
-          if (svcRes.data && svcRes.data.length > 0) {
-              const mapped = svcRes.data.map(d => mapFromDb('services', d));
-              setServices(mapped);
-              persist('erp_services', mapped);
-          }
+          if (cRes.data) setCustomers(cRes.data.map(d => mapFromDb('customers', d)));
+          if (jRes.data) setJobs(jRes.data.map(d => mapFromDb('jobs', d)));
+          if (sRes.data) setStaff(sRes.data.map(d => mapFromDb('staff', d)));
+          if (tRes.data) setTransactions(tRes.data.map(d => mapFromDb('transactions', d)));
+          if (iRes.data) setInventory(iRes.data.map(d => mapFromDb('inventory', d)));
+          if (pRes.data) setPurchases(pRes.data.map(d => mapFromDb('purchases', d)));
+          if (svcRes.data) setServices(svcRes.data.map(d => mapFromDb('services', d)));
 
           setSyncStatus('SYNCED');
           setLastSyncError(null);
       } catch (err: any) {
           console.error("Supabase Pull Error:", err.message);
           setSyncStatus('ERROR');
-          setLastSyncError(`Pull failed: ${err.message}. Check SQL Schema.`);
       }
   }, []);
 
@@ -258,30 +226,20 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!supabase || !isCloudConnected) return;
       try {
           setSyncStatus('SYNCING');
-          const cPayload = customers.map(c => mapToDb('customers', c));
-          const jPayload = jobs.map(j => mapToDb('jobs', j));
-          const sPayload = staff.map(s => mapToDb('staff', s));
-          const tPayload = transactions.map(t => mapToDb('transactions', t));
-          const iPayload = inventory.map(i => mapToDb('inventory', i));
-          const pPayload = purchases.map(p => mapToDb('purchases', p));
-          const svcPayload = services.map(s => mapToDb('services', s));
-
           await Promise.all([
-            supabase.from('customers').upsert(cPayload),
-            supabase.from('jobs').upsert(jPayload),
-            supabase.from('staff').upsert(sPayload),
-            supabase.from('transactions').upsert(tPayload),
-            supabase.from('inventory').upsert(iPayload),
-            supabase.from('purchases').upsert(pPayload),
-            supabase.from('services').upsert(svcPayload)
+            supabase.from('customers').upsert(customers.map(c => mapToDb('customers', c))),
+            supabase.from('jobs').upsert(jobs.map(j => mapToDb('jobs', j))),
+            supabase.from('staff').upsert(staff.map(s => mapToDb('staff', s))),
+            supabase.from('transactions').upsert(transactions.map(t => mapToDb('transactions', t))),
+            supabase.from('inventory').upsert(inventory.map(i => mapToDb('inventory', i))),
+            supabase.from('purchases').upsert(purchases.map(p => mapToDb('purchases', p))),
+            supabase.from('services').upsert(services.map(s => mapToDb('services', s)))
           ]);
-          
           setSyncStatus('SYNCED');
-          alert("All local modules (including Services) have been successfully pushed to the Cloud Database.");
+          alert("Manual sync complete.");
       } catch (err: any) {
           console.error("Manual Sync Error:", err);
           setSyncStatus('ERROR');
-          setLastSyncError(`Manual push failed: ${err.message}`);
       }
   };
 
@@ -324,19 +282,15 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       setSyncStatus('SYNCING');
       const client = createClient(url, key);
-      
       const { error } = await client.from('staff').select('id').limit(1);
       if (error) throw error;
-      
       setSupabase(client);
       setIsCloudConnected(true);
       setSyncStatus('SYNCED');
-      
       await pullFromCloud(client);
     } catch (err: any) {
       console.error("Initialization failed:", err.message);
       setSyncStatus('ERROR');
-      setLastSyncError(err.message);
       setIsCloudConnected(false);
     }
   };
@@ -492,81 +446,45 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pushToCloud('transactions', tx);
   };
 
-  const bulkAddTransactions = (txs: Transaction[]) => {
+  const bulkAddTransactions = (txs: Transaction[], skipAutoOffset: boolean = false) => {
     const newTx = [...transactions, ...txs];
     setTransactions(newTx);
     persist('erp_transactions', newTx);
-    updateLedger(txs);
+    updateLedger(txs, skipAutoOffset);
     txs.forEach(t => pushToCloud('transactions', t));
   };
 
-  // --- SEMANTIC ENGINE: THE VAULT V4 (MASTER LEDGER SYNC) ---
-  const updateLedger = (newTransactions: Transaction[]) => {
+  const updateLedger = (newTransactions: Transaction[], skipAutoOffset: boolean = false) => {
     setAccounts(prev => {
       let updatedAccounts = [...prev];
-
       newTransactions.forEach(tx => {
-         const cat = tx.category.toLowerCase();
-         const desc = tx.description.toLowerCase();
-         const isInc = tx.type === 'INCOME';
-         const amt = tx.amount;
-
          updatedAccounts = updatedAccounts.map(acc => {
-            const accName = acc.name.toLowerCase();
-            const accCode = acc.code;
-
-            // 1. DIRECT ACCOUNT MATCH (STRICT) - If row explicitly names a master account
-            if (cat === accName || cat.includes(accName) || accName.includes(cat)) {
-                return { ...acc, balance: isInc ? acc.balance + amt : acc.balance + amt }; 
-                // Note: Double-entry rows already come typed. We just sum the balance.
+            // IF MANUAL ENTRY (NOT BULK IMPORT LEGACY): Auto-offset Cash
+            if (!skipAutoOffset) {
+                if (acc.code === '1000') {
+                  if (tx.type === 'INCOME') return { ...acc, balance: acc.balance + tx.amount };
+                  if (tx.type === 'EXPENSE') return { ...acc, balance: acc.balance - tx.amount };
+                }
             }
 
-            // 2. SEMANTIC CATEGORY MATCHING
-            // ASSETS (1000-1999)
-            if (accCode.startsWith('1')) {
-                if (accCode === '1000' && cat.includes('cash')) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
-                if (accCode === '1010' && cat.includes('bank')) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
-                if (accCode === '1500' && (cat.includes('land') || cat.includes('lease') || cat.includes('building'))) return { ...acc, balance: isInc ? acc.balance - amt : acc.balance + amt };
-                if (accCode === '1600' && (cat.includes('deposit') || cat.includes('advance'))) return { ...acc, balance: isInc ? acc.balance - amt : acc.balance + amt };
-                if (accCode === '1400' && (cat.includes('equipment') || cat.includes('lift') || cat.includes('compressor'))) return { ...acc, balance: isInc ? acc.balance - amt : acc.balance + amt };
+            // Always update the specific revenue/expense accounts
+            if (tx.type === 'INCOME' && acc.code === '4000') return { ...acc, balance: acc.balance + tx.amount };
+            if (tx.type === 'EXPENSE') {
+               const cat = tx.category.toLowerCase();
+               if (acc.code === '1200' && (cat.includes('inventory') || cat.includes('stock'))) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5100' && (cat.includes('labor') || cat.includes('payroll') || cat.includes('salary'))) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5200' && cat.includes('rent')) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5300' && (cat.includes('utility') || cat.includes('power') || cat.includes('water'))) return { ...acc, balance: acc.balance + tx.amount };
+               else if (acc.code === '5000' && !cat.includes('labor') && !cat.includes('rent') && !cat.includes('utility') && !cat.includes('inventory')) return { ...acc, balance: acc.balance + tx.amount };
+               
+               // If bulk importing specific accounts:
+               if (skipAutoOffset && acc.name.toLowerCase() === tx.category.toLowerCase()) {
+                   return { ...acc, balance: acc.balance + tx.amount };
+               }
             }
-
-            // LIABILITIES (2000-2999)
-            if (accCode.startsWith('2')) {
-                if (accCode === '2000' && (cat.includes('payable') || cat.includes('cs car care'))) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
-                if (accCode === '2100' && (cat.includes('loan') || cat.includes('pmegp'))) return { ...acc, balance: isInc ? acc.balance + amt : acc.balance - amt };
-            }
-
-            // EQUITY (3000)
-            if (accCode === '3000' && (cat.includes('capital') || cat.includes('investment'))) {
-                return { ...acc, balance: acc.balance + amt };
-            }
-
-            // REVENUE (4000-4999)
-            if (isInc && accCode.startsWith('4')) {
-                if (accCode === '4000' && (cat.includes('wash') || desc.includes('wash'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '4100' && (cat.includes('wax') || cat.includes('polish'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '4200' && cat.includes('detailing')) return { ...acc, balance: acc.balance + amt };
-            }
-
-            // EXPENSES (5000-5999)
-            if (!isInc && accCode.startsWith('5')) {
-                // Block revenue leakage
-                if (cat.includes('wash') || cat.includes('detailing') || cat.includes('income')) return acc;
-
-                if (accCode === '5100' && (cat.includes('salary') || cat.includes('wage') || cat.includes('labor') || cat.includes('payroll'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '5400' && (cat.includes('legal') || cat.includes('consultant') || cat.includes('fee') || cat.includes('tax'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '5500' && (cat.includes('welfare') || cat.includes('incentive') || cat.includes('food'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '5600' && (cat.includes('stationery') || cat.includes('paper') || cat.includes('stamp'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '5700' && (cat.includes('transport') || cat.includes('petrol') || cat.includes('fuel'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '5300' && (cat.includes('water') || cat.includes('electricity') || cat.includes('power') || cat.includes('kseb'))) return { ...acc, balance: acc.balance + amt };
-                if (accCode === '5000' && (cat.includes('chemical') || cat.includes('consumable') || cat.includes('compound') || cat.includes('shampoo'))) return { ...acc, balance: acc.balance + amt };
-            }
-
             return acc;
          });
       });
-      persist('erp_accounts', updatedAccounts);
       return updatedAccounts;
     });
   };
@@ -577,7 +495,7 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `tx-pay-${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
       type: 'EXPENSE',
-      category: 'Labor & Salaries',
+      category: 'Labor Expense',
       amount: totalPayroll,
       method: 'TRANSFER',
       description: `Staff Payroll Execution - ${payrollData.length} Employees (${month})`
