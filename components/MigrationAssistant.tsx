@@ -9,29 +9,27 @@ import {
 
 export const MigrationAssistant: React.FC = () => {
   const { 
-    bulkProcessJournal, updatePassword
+    bulkProcessJournal, restoreData, connectToCloud, updatePassword, accounts
   } = useERP();
   
-  const [activeTab, setActiveTab] = useState<'MIGRATION' | 'PROFILE'>('MIGRATION');
+  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('MIGRATION');
+  const [passSuper, setPassSuper] = useState('');
+  const [passStaff, setPassStaff] = useState('');
   const [importLoading, setImportLoading] = useState(false);
 
   const cleanNum = (val: string) => {
-      if (!val) return 0;
-      // Handle parentheses for negative numbers e.g. (38,000)
-      let cleaned = val.replace(/[",\s]/g, '');
-      if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
-          cleaned = '-' + cleaned.slice(1, -1);
-      }
+      if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
+      const cleaned = val.replace(/[",\s]/g, '');
       const parsed = parseFloat(cleaned);
-      return isFinite(parsed) ? Math.abs(parsed) : 0;
+      return isFinite(parsed) ? parsed : 0;
   };
 
-  const getAccountType = (typeStr: string, name: string): AccountType => {
-      const s = (typeStr || name).toUpperCase();
-      if (s.includes('REVENUE') || s.includes('INCOME') || s.includes('SALES')) return AccountType.REVENUE;
-      if (s.includes('EXPENSE') || s.includes('OVERHEAD') || s.includes('CHARGE') || s.includes('FEES')) return AccountType.EXPENSE;
+  const getAccountType = (typeStr: string): AccountType => {
+      const s = typeStr.toUpperCase();
+      if (s.includes('REVENUE') || s.includes('INCOME')) return AccountType.REVENUE;
+      if (s.includes('EXPENSE') || s.includes('OVERHEAD')) return AccountType.EXPENSE;
       if (s.includes('ASSET') || s.includes('BANK') || s.includes('CASH')) return AccountType.ASSET;
-      if (s.includes('EQUITY') || s.includes('CAPITAL') || s.includes('INVESTMENT')) return AccountType.EQUITY;
+      if (s.includes('EQUITY') || s.includes('CAPITAL')) return AccountType.EQUITY;
       if (s.includes('LIABILITY') || s.includes('PAYABLE')) return AccountType.LIABILITY;
       return AccountType.EXPENSE;
   };
@@ -49,66 +47,70 @@ export const MigrationAssistant: React.FC = () => {
               return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
           });
 
-          // Skip headers and empty rows
           const dataRows = rows.filter(row => {
-             if (row.length < 4) return false;
+             if (row.length < 5) return false;
              const firstCol = (row[0] || '').toLowerCase();
-             return !firstCol.includes('date') && !firstCol.includes('account') && !firstCol.includes('total');
+             const isHeader = firstCol.includes('date') || firstCol.includes('account');
+             const isTotal = firstCol.includes('total') || firstCol.includes('balance');
+             return !isHeader && !isTotal && row[1];
           });
           
           const journalEntries: any[] = [];
 
-          // PAIRING ENGINE: Processes Row A (Debit) + Row B (Credit) as ONE EVENT
+          // PAIRING LOGIC: Iterate in steps of 2 for Double-Entry pairing
           for (let i = 0; i < dataRows.length; i += 2) {
               const row1 = dataRows[i];
               const row2 = dataRows[i+1];
               if (!row1 || !row2) break;
 
+              // Row 1 Data
+              const d1 = cleanNum(row1[3]);
+              const c1 = cleanNum(row1[4]);
               const acc1 = row1[1];
-              const acc2 = row2[1];
-              const type1 = getAccountType(row1[2], acc1);
-              const type2 = getAccountType(row2[2], acc2);
+              const type1 = getAccountType(row1[2] || '');
               
-              const val1 = cleanNum(row1[3]) || cleanNum(row1[4]);
-              const val2 = cleanNum(row2[3]) || cleanNum(row2[4]);
+              // Row 2 Data
+              const d2 = cleanNum(row2[3]);
+              const c2 = cleanNum(row2[4]);
+              const acc2 = row2[1];
+              const type2 = getAccountType(row2[2] || '');
 
               const date = row1[0];
-              const desc = row1[5] || `${acc1} funded by ${acc2}`;
+              const desc = row1[5] || `${acc1} - ${acc2}`;
 
-              // SMART MERGER:
-              // If Row 1 and Row 2 have the SAME account name (e.g. Municipality Charge),
-              // we treat the first one as the actual Expense/Income and the second as just the 'Source' label.
-              // This prevents the 100 - 100 = 0 zero-out bug.
-              const isSameAccount = acc1.toLowerCase() === acc2.toLowerCase();
-              
               const entry = {
                   legs: [
-                      { accountName: acc1, amount: val1, isDebit: true, accountType: type1 }
+                      { accountName: acc1, amount: d1 || c1, isDebit: d1 > 0, accountType: type1 },
+                      { accountName: acc2, amount: d2 || c2, isDebit: d2 > 0, accountType: type2 }
                   ],
-                  historyTx: {
-                      id: `imp-${Date.now()}-${i}`,
-                      date: date,
-                      type: type1 === AccountType.REVENUE ? 'INCOME' : 'EXPENSE',
-                      category: acc1,
-                      amount: val1,
-                      description: desc,
-                      method: acc2.toUpperCase().includes('CASH') ? 'CASH' : 'TRANSFER'
-                  }
+                  historyTx: undefined as any
               };
 
-              // Only add the balancing leg to the ledger if it's actually a different account
-              if (!isSameAccount) {
-                  entry.legs.push({ accountName: acc2, amount: val2, isDebit: false, accountType: type2 });
+              // Determine P&L side for Dashboard History
+              // A P&L transaction is defined by a Revenue or Expense leg.
+              const plLeg = (type1 === AccountType.REVENUE || type1 === AccountType.EXPENSE) ? { acc: acc1, type: type1, amt: d1 || c1 } :
+                           (type2 === AccountType.REVENUE || type2 === AccountType.EXPENSE) ? { acc: acc2, type: type2, amt: d2 || c2 } : null;
+
+              if (plLeg) {
+                  entry.historyTx = {
+                      id: `imp-${Date.now()}-${i}`,
+                      date: date,
+                      type: plLeg.type === AccountType.REVENUE ? 'INCOME' : 'EXPENSE',
+                      category: plLeg.acc,
+                      amount: plLeg.amt,
+                      description: desc,
+                      method: 'TRANSFER'
+                  };
               }
 
               journalEntries.push(entry);
           }
 
-          if (journalEntries.length > 0) {
+          if (journalEntries.length === 0) {
+              alert("Import Error: No valid paired entries found.");
+          } else if (window.confirm(`Found ${journalEntries.length} Transactions. Synchronize General Ledger?`)) {
               bulkProcessJournal(journalEntries);
-              alert(`Import Complete: Processed ${journalEntries.length} merged transactions.`);
-          } else {
-              alert("Error: No valid transaction pairs found in CSV.");
+              alert(`Success: ${journalEntries.length} paired transactions imported. Ledger balanced.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -117,49 +119,61 @@ export const MigrationAssistant: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-        <div>
-          <h2 className="text-3xl font-black text-black uppercase tracking-tighter">System Migration</h2>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Accounting Protocol 4.0</p>
-        </div>
+    <div className="space-y-6 animate-fade-in-up">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">System Control</h2>
         <div className="flex gap-2">
-             <button onClick={() => setActiveTab('MIGRATION')} className={`px-6 py-3 text-xs font-black uppercase rounded-xl border-4 border-black transition-all ${activeTab === 'MIGRATION' ? 'bg-black text-white' : 'bg-white text-black hover:bg-slate-50'}`}>Importer</button>
-             <button onClick={() => setActiveTab('PROFILE')} className={`px-6 py-3 text-xs font-black uppercase rounded-xl border-4 border-black transition-all ${activeTab === 'PROFILE' ? 'bg-black text-white' : 'bg-white text-black hover:bg-slate-50'}`}>Security</button>
+             <button onClick={() => setActiveTab('PROFILE')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'PROFILE' ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Security</button>
+             <button onClick={() => setActiveTab('MIGRATION')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'MIGRATION' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Import</button>
         </div>
       </div>
 
       {activeTab === 'MIGRATION' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="bg-white p-10 rounded-[32px] border-4 border-black shadow-[12px_12px_0px_0px_rgba(79,70,229,1)]">
-                <div className="flex items-center gap-4 mb-8">
-                    <div className="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg"><Landmark size={32}/></div>
-                    <h4 className="text-2xl font-black text-black uppercase tracking-tight">Master Ledger Import</h4>
+        <div className="space-y-6 text-black">
+            <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
+                <div className="flex items-center gap-3 mb-6">
+                    <Landmark className="text-indigo-600" size={28}/>
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Double-Entry CSV Importer</h4>
                 </div>
                 
-                <label className="flex flex-col items-center justify-center border-4 border-dashed border-indigo-200 rounded-[32px] p-12 hover:border-indigo-600 cursor-pointer transition-all bg-indigo-50/30 group mb-8">
-                    {importLoading ? <Loader2 className="animate-spin text-indigo-600" size={48} /> : <Upload className="text-indigo-600 mb-4" size={48}/>}
-                    <span className="text-xl font-black text-indigo-900 uppercase">Drop CSV File</span>
-                    <p className="text-xs font-bold text-indigo-400 mt-2 uppercase">Paired Row Mode Active</p>
-                    <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
-                </label>
-
-                <div className="bg-black text-white p-6 rounded-2xl">
-                    <div className="flex items-center gap-2 mb-2 text-amber-400">
-                        <AlertCircle size={16}/>
-                        <span className="text-[10px] font-black uppercase tracking-widest">Logic: Circular Fix Active</span>
+                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm max-w-lg">
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> Automatic Journal Pairing Engine</h5>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
+                        {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
+                        <span className="text-sm font-bold text-indigo-800">Drop Master Ledger CSV</span>
+                        <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
+                    </label>
+                    <div className="mt-4 p-4 bg-slate-900 rounded-xl border border-slate-700 shadow-inner">
+                        <p className="text-[10px] font-black text-amber-400 uppercase mb-1">PRO-PAIRED MODE ACTIVE:</p>
+                        <p className="text-[9px] text-slate-300 leading-relaxed font-bold">This importer now correctly pairs consecutive rows (e.g., Municipality Charge + Owner's Investment) to prevent zeroing out your revenue. The P&L side is extracted for history, while the balancing leg updates your bank/cash balances.</p>
                     </div>
-                    <p className="text-[11px] font-bold leading-relaxed text-slate-300">
-                        If your CSV lists the same account name twice (once for Debit, once for Credit), the system will now correctly interpret the first row as the Balance Increase and the second as the Funding Source. This prevents the "Zero Revenue" error.
-                    </p>
                 </div>
             </div>
+        </div>
+      )}
 
-            <div className="bg-slate-50 p-10 rounded-[32px] border-4 border-black border-dashed flex flex-col justify-center items-center text-center">
-                 <Database size={64} className="text-slate-300 mb-6"/>
-                 <h4 className="text-xl font-black text-slate-400 uppercase mb-2">Cloud Sync Terminal</h4>
-                 <p className="text-xs font-bold text-slate-400 max-w-xs uppercase leading-loose">Real-time database mirroring is currently offline. All data is saved to Local Secure Storage.</p>
-            </div>
+      {activeTab === 'PROFILE' && (
+        <div className="bg-white p-8 rounded-lg border border-slate-200 shadow-sm text-black">
+            <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Lock size={14} className="text-red-600"/> Security Access</h4>
+            <form onSubmit={(e) => {
+                e.preventDefault();
+                if (passSuper) updatePassword('SUPER_ADMIN', passSuper);
+                if (passStaff) updatePassword('STAFF', passStaff);
+                setPassSuper(''); setPassStaff('');
+                alert('✅ Credentials Updated!');
+            }} className="space-y-6 max-w-xl">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Master Admin Password</label>
+                        <input type="password" value={passSuper} onChange={e => setPassSuper(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-600/20" />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Staff Portal Password</label>
+                        <input type="password" value={passStaff} onChange={e => setPassStaff(e.target.value)} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-red-600/20" />
+                    </div>
+                </div>
+                <button type="submit" className="px-8 py-3 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-700 shadow-lg">Save Credentials</button>
+            </form>
         </div>
       )}
     </div>
