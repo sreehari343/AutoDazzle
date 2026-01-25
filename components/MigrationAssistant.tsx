@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { analyzeDataStructure } from '../services/geminiService.ts';
-import { AIAnalysisResult, Transaction } from '../types.ts';
+import { AIAnalysisResult, Transaction, AccountType } from '../types.ts';
 import { useERP } from '../contexts/ERPContext.tsx';
 import { 
   Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
@@ -90,9 +90,11 @@ export const MigrationAssistant: React.FC = () => {
     alert('✅ Credentials Updated!');
   };
 
+  // ROBUST NUMERIC CLEANER FOR EXCEL " 4,068.00 " FORMAT
   const cleanNum = (val: string) => {
       if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
-      const cleaned = val.replace(/[^0-9.-]+/g, '');
+      // Remove quotes, commas, and all non-numeric chars except decimal and minus
+      const cleaned = val.replace(/[",\s]/g, '');
       const parsed = parseFloat(cleaned);
       return isFinite(parsed) ? parsed : 0;
   };
@@ -105,34 +107,39 @@ export const MigrationAssistant: React.FC = () => {
       const reader = new FileReader();
       reader.onload = async (event) => {
           const text = event.target?.result as string;
+          // Simple CSV line parser that respects quoted commas
           const rows = text.split('\n').filter(r => r.trim()).map(row => {
               const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
               return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
           });
 
-          // FILTER: Skip headers, summary rows, or empty lines
+          // FILTER: Skip headers, summary rows
           const dataRows = rows.filter(row => {
              if (row.length < 5) return false;
              const firstCol = (row[0] || '').toLowerCase();
              const secondCol = (row[1] || '').toLowerCase();
-             const isHeader = firstCol.includes('date') || secondCol.includes('acc');
+             const isHeader = firstCol.includes('date') || secondCol.includes('account') || secondCol.includes('acc');
              const isTotal = firstCol.includes('total') || secondCol.includes('total') || firstCol.includes('balance');
-             return !isHeader && !isTotal && row[1]; // Must have account name
+             return !isHeader && !isTotal && row[1];
           });
           
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
-              // EXPECTED 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
+              // CSV Columns: [0]Date, [1]Account Name, [2]Account Type, [3]Debit, [4]Credit, [5]Description
               const date = row[0] || new Date().toISOString().split('T')[0];
-              const accName = row[1] || 'Imported Account';
+              const accName = row[1] || 'Unknown';
+              const accType = (row[2] || '').toUpperCase();
               const debit = cleanNum(row[3]);
               const credit = cleanNum(row[4]);
               const desc = row[5] || accName;
 
-              // Double Entry Row logic
-              if (debit > 0) {
+              // ACCOUNTING LOGIC:
+              // Only record in Transaction History (History Tab) if the account is Revenue or Expense.
+              // Everything else (Equity, Asset, Liability) only updates the balance sheet (hidden from History list).
+              
+              if (accType.includes('EXPENSE') && debit > 0) {
                   newTxs.push({ 
-                      id: `imp-dr-${Date.now()}-${idx}`, 
+                      id: `imp-exp-${Date.now()}-${idx}`, 
                       date, 
                       type: 'EXPENSE', 
                       category: accName, 
@@ -140,10 +147,9 @@ export const MigrationAssistant: React.FC = () => {
                       description: desc, 
                       method: 'TRANSFER' 
                   });
-              }
-              if (credit > 0) {
+              } else if ((accType.includes('REVENUE') || accType.includes('INCOME')) && credit > 0) {
                   newTxs.push({ 
-                      id: `imp-cr-${Date.now()}-${idx}`, 
+                      id: `imp-rev-${Date.now()}-${idx}`, 
                       date, 
                       type: 'INCOME', 
                       category: accName, 
@@ -152,13 +158,15 @@ export const MigrationAssistant: React.FC = () => {
                       method: 'TRANSFER' 
                   });
               }
+              // Note: Other legs like "Owner's Investment" (Equity) are processed via updateLedger 
+              // which happens automatically in bulkAddTransactions.
           });
 
           if (newTxs.length === 0) {
-              alert("Import Error: No valid numerical data found. Please ensure your CSV has 6 columns: Date, Acc Name, Acc Type, Debit, Credit, Description.");
-          } else if (window.confirm(`Found ${newTxs.length} ledger entries. Proceed with import?`)) {
+              alert("Import Error: No valid 'Expense' or 'Revenue' rows found. Ensure the 'Account Type' column contains keywords like Expense, Revenue, or Income.");
+          } else if (window.confirm(`Detected ${newTxs.length} P&L entries. Proceed with import?`)) {
               bulkAddTransactions(newTxs);
-              alert(`Successfully imported ${newTxs.length} records into the system ledger.`);
+              alert(`Successfully imported ${newTxs.length} entries into the ledger history.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -223,15 +231,16 @@ export const MigrationAssistant: React.FC = () => {
                 </div>
                 
                 <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm max-w-lg">
-                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> Double-Entry Batch Importer</h5>
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> True Double-Entry Importer</h5>
                     <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
                         {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
                         <span className="text-sm font-bold text-indigo-800">Select Excel/CSV Ledger</span>
                         <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
                     </label>
-                    <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
-                        <p className="text-[10px] font-black text-slate-400 uppercase mb-1">STRICT 6-COLUMN ORDER:</p>
-                        <p className="text-[9px] font-mono text-slate-600 leading-tight bg-white p-2 rounded">Date, Account Name, Account Type, Debit, Credit, Description</p>
+                    <div className="mt-4 p-4 bg-slate-900 rounded-lg border border-slate-700">
+                        <p className="text-[10px] font-black text-indigo-400 uppercase mb-1">STRICT 6-COLUMN ORDER:</p>
+                        <p className="text-[9px] font-mono text-white leading-tight bg-black/30 p-2 rounded">Date, Account Name, Account Type, Debit, Credit, Description</p>
+                        <p className="text-[9px] text-slate-400 mt-2 italic">* Offset entries (Equity/Asset legs) are correctly excluded from the P&L list.</p>
                     </div>
                 </div>
             </div>
