@@ -61,11 +61,10 @@ interface ERPContextType {
   addPurchase: (purchase: PurchaseOrder) => void;
   addTransaction: (tx: Transaction) => void;
   bulkProcessJournal: (journalEntries: { historyTx?: Transaction, legs: LedgerLeg[] }[]) => void;
-  bulkAddPurchases: (pos: PurchaseOrder[]) => void;
-  executePayroll: (month: string, payrollData: any[]) => void;
-  bulkAddServices: (services: Service[]) => void;
+  getSystemState: () => any;
   restoreData: (data: any) => void;
   resetToFactory: () => void;
+  executePayroll: (month: string, records: any[]) => void;
 }
 
 const ERPContext = createContext<ERPContextType | undefined>(undefined);
@@ -111,8 +110,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let updated = [...prev];
       legs.forEach(leg => {
         let acc = updated.find(a => a.name.toLowerCase() === leg.accountName.toLowerCase());
-        
-        // Auto-create missing accounts
         if (!acc) {
           acc = {
             id: `acc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -123,8 +120,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
           updated.push(acc);
         }
-
-        // GAAP Balancing Logic
         const isDebitNature = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
         if (isDebitNature) {
           acc.balance += (leg.isDebit ? leg.amount : -leg.amount);
@@ -137,12 +132,25 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const getSystemState = () => ({
+    logoUrl,
+    customers,
+    jobs,
+    inventory,
+    staff,
+    services,
+    transactions,
+    accounts,
+    purchases,
+    payrollHistory,
+    stockLogs,
+    passwords
+  });
+
   const addTransaction = (tx: Transaction) => {
     const newList = [...transactions, tx];
     setTransactions(newList);
     persist('erp_transactions', newList);
-    
-    // Auto-offset for manual entries
     const legs: LedgerLeg[] = [
       { accountName: tx.category, amount: tx.amount, isDebit: tx.type === 'EXPENSE' },
       { accountName: 'Cash on Hand', amount: tx.amount, isDebit: tx.type === 'INCOME' }
@@ -155,7 +163,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updatedHistory = [...transactions, ...newTxs];
     setTransactions(updatedHistory);
     persist('erp_transactions', updatedHistory);
-
     const allLegs = entries.flatMap(e => e.legs);
     updateBalances(allLegs);
   };
@@ -177,13 +184,19 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updatePassword = (role: UserRole, newPass: string) => {
-    setPasswords(prev => ({ ...prev, [role]: newPass }));
-    localStorage.setItem(`pass_${role.toLowerCase()}`, newPass);
+    setPasswords(prev => {
+        const u = { ...prev, [role]: newPass };
+        localStorage.setItem(`pass_${role.toLowerCase()}`, newPass);
+        return u;
+    });
   };
 
   const connectToCloud = async (url: string, key: string): Promise<boolean> => {
     try {
+      setSyncStatus('SYNCING');
       const client = createClient(url, key);
+      const { error } = await client.from('erp_status').select('*').limit(1);
+      if (error && error.code !== 'PGRST116') throw error;
       setSupabase(client);
       setIsCloudConnected(true);
       setSyncStatus('SYNCED');
@@ -191,150 +204,204 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem('supabase_key', key);
       return true;
     } catch (err: any) {
+      console.error(err);
       setSyncStatus('ERROR');
       return false;
     }
   };
 
-  const addJob = (job: JobCard) => {
-    const updated = [...jobs, job];
-    setJobs(updated);
-    persist('erp_jobs', updated);
-  };
-
-  const updateJob = (job: JobCard) => {
-    const updated = jobs.map(j => j.id === job.id ? job : j);
-    setJobs(updated);
-    persist('erp_jobs', updated);
-  };
-
-  const deleteJob = (id: string) => {
-    const updated = jobs.filter(j => j.id !== id);
-    setJobs(updated);
-    persist('erp_jobs', updated);
-  };
-
-  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod: Transaction['method'] = 'CASH') => {
-    const updatedJobs = jobs.map(j => {
-      if (j.id === id) {
-        if (status === 'INVOICED' && j.status !== 'INVOICED') {
-          addTransaction({
-            id: `tx-sale-${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
-            type: 'INCOME',
-            category: 'Service Revenue',
-            amount: j.total,
-            method: paymentMethod,
-            description: `Invoice ${j.ticketNumber} Payment`
-          });
-        }
-        return { ...j, status };
-      }
-      return j;
-    });
-    setJobs(updatedJobs);
-    persist('erp_jobs', updatedJobs);
-  };
-
-  const addStaff = (member: Staff) => {
-    const updated = [...staff, member];
-    setStaff(updated);
-    persist('erp_staff', updated);
-  };
-
-  const removeStaff = (id: string) => {
-    const updated = staff.filter(s => s.id !== id);
-    setStaff(updated);
-    persist('erp_staff', updated);
-  };
-
-  const updateStaff = (updatedStaff: Staff) => {
-    const updated = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
-    setStaff(updated);
-    persist('erp_staff', updated);
-  };
-
-  const addInventoryItem = (item: InventoryItem) => {
-    const updated = [...inventory, item];
-    setInventory(updated);
-    persist('erp_inventory', updated);
-  };
-
-  const deleteInventoryItem = (id: string) => {
-    const updated = inventory.filter(i => i.id !== id);
-    setInventory(updated);
-    persist('erp_inventory', updated);
-  };
-
-  const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
-      setInventory(prev => {
-          const updated = prev.map(i => i.id === itemId ? { ...i, quantityOnHand: Math.max(0, i.quantityOnHand - quantity) } : i);
-          persist('erp_inventory', updated);
-          return updated;
-      });
-  };
-
-  const bulkAddInventory = (items: InventoryItem[]) => {
-      setInventory(prev => {
-          const updated = [...prev, ...items];
-          persist('erp_inventory', updated);
-          return updated;
-      });
-  };
-
-  const addService = (service: Service) => {
-    const updated = [...services, service];
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const updateService = (service: Service) => {
-    const updated = services.map(s => s.id === service.id ? service : s);
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const deleteService = (id: string) => {
-    const updated = services.filter(s => s.id !== id);
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const executePayroll = (month: string, payrollData: any[]) => {
-    const total = payrollData.reduce((sum, p) => sum + p.netPay, 0);
-    addTransaction({
-      id: `tx-pay-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
-      type: 'EXPENSE',
-      category: 'Labor Expense',
-      amount: total,
-      method: 'TRANSFER',
-      description: `Payroll ${month}`
-    });
-    setPayrollHistory(prev => {
-      const snap = { id: `pr-${Date.now()}`, month, dateGenerated: new Date().toISOString(), totalAmount: total, records: payrollData, status: 'FINALIZED' as const };
-      const updated = [...prev, snap];
-      persist('erp_payroll_history', updated);
-      return updated;
-    });
-  };
-
   const restoreData = (data: any) => {
-    if (data.modules) {
-      setCustomers(data.modules.customers || []);
-      setJobs(data.modules.jobs || []);
-      setStaff(data.modules.staff || []);
-      setTransactions(data.modules.transactions || []);
-      setInventory(data.modules.inventory || []);
-      setServices(data.modules.services || []);
-      setAccounts(data.modules.financials || MOCK_ACCOUNTS);
-      setPayrollHistory(data.modules.payrollHistory || []);
-    }
+    if (data.accounts) setAccounts(data.accounts);
+    if (data.transactions) setTransactions(data.transactions);
+    if (data.customers) setCustomers(data.customers);
+    if (data.jobs) setJobs(data.jobs);
+    if (data.inventory) setInventory(data.inventory);
+    if (data.staff) setStaff(data.staff);
+    if (data.services) setServices(data.services);
+    if (data.logoUrl) { setLogoUrl(data.logoUrl); localStorage.setItem('erp_logo', data.logoUrl); }
+    
+    // Persist all
+    Object.keys(data).forEach(key => {
+        localStorage.setItem(`erp_${key}`, JSON.stringify(data[key]));
+    });
   };
 
   const resetToFactory = () => {
     localStorage.clear();
     window.location.reload();
+  };
+
+  // Implement missing Job functions
+  const addJob = (job: JobCard) => {
+    const u = [...jobs, job];
+    setJobs(u);
+    persist('erp_jobs', u);
+  };
+
+  const updateJob = (job: JobCard) => {
+    const u = jobs.map(j => j.id === job.id ? job : j);
+    setJobs(u);
+    persist('erp_jobs', u);
+  };
+
+  const deleteJob = (id: string) => {
+    const u = jobs.filter(j => j.id !== id);
+    setJobs(u);
+    persist('erp_jobs', u);
+  };
+
+  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod?: Transaction['method']) => {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return;
+    
+    const updatedJob: JobCard = { 
+      ...job, 
+      status, 
+      paymentStatus: status === 'INVOICED' ? 'PAID' : job.paymentStatus 
+    };
+    
+    updateJob(updatedJob);
+    
+    if (status === 'INVOICED') {
+      const tx: Transaction = {
+        id: `tx-job-${id}-${Date.now()}`,
+        date: new Date().toISOString().split('T')[0],
+        type: 'INCOME',
+        category: 'Service Revenue',
+        amount: updatedJob.total,
+        method: paymentMethod || 'CASH',
+        description: `Invoice #${updatedJob.ticketNumber}`
+      };
+      addTransaction(tx);
+    }
+  };
+
+  // Implement missing Staff functions
+  const addStaff = (member: Staff) => {
+    const u = [...staff, member];
+    setStaff(u);
+    persist('erp_staff', u);
+  };
+
+  const removeStaff = (id: string) => {
+    const u = staff.filter(s => s.id !== id);
+    setStaff(u);
+    persist('erp_staff', u);
+  };
+
+  const updateStaff = (updatedStaff: Staff) => {
+    const u = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
+    setStaff(u);
+    persist('erp_staff', u);
+  };
+
+  // Implement missing Inventory functions
+  const addInventoryItem = (item: InventoryItem) => {
+    const u = [...inventory, item];
+    setInventory(u);
+    persist('erp_inventory', u);
+  };
+
+  const deleteInventoryItem = (id: string) => {
+    const u = inventory.filter(i => i.id !== id);
+    setInventory(u);
+    persist('erp_inventory', u);
+  };
+
+  const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
+    const item = inventory.find(i => i.id === itemId);
+    if (!item) return;
+    
+    const updatedInventory = inventory.map(i => 
+      i.id === itemId ? { ...i, quantityOnHand: i.quantityOnHand - quantity } : i
+    );
+    setInventory(updatedInventory);
+    persist('erp_inventory', updatedInventory);
+    
+    const log: StockTransaction = {
+      id: `log-${Date.now()}`,
+      itemId,
+      date: new Date().toISOString().split('T')[0],
+      type: 'USAGE',
+      quantity,
+      notes
+    };
+    const updatedLogs = [...stockLogs, log];
+    setStockLogs(updatedLogs);
+    persist('erp_stock_logs', updatedLogs);
+  };
+
+  const bulkAddInventory = (items: InventoryItem[]) => {
+    const u = [...inventory, ...items];
+    setInventory(u);
+    persist('erp_inventory', u);
+  };
+
+  // Implement missing Service functions
+  const addService = (service: Service) => {
+    const u = [...services, service];
+    setServices(u);
+    persist('erp_services', u);
+  };
+
+  const updateService = (service: Service) => {
+    const u = services.map(s => s.id === service.id ? service : s);
+    setServices(u);
+    persist('erp_services', u);
+  };
+
+  const deleteService = (id: string) => {
+    const u = services.filter(s => s.id !== id);
+    setServices(u);
+    persist('erp_services', u);
+  };
+
+  // Implement missing Payroll and Purchase functions
+  const executePayroll = (month: string, records: any[]) => {
+    const total = records.reduce((sum, r) => sum + r.netPay, 0);
+    const run: PayrollRun = {
+      id: `pr-${Date.now()}`,
+      month,
+      dateGenerated: new Date().toISOString().split('T')[0],
+      totalAmount: total,
+      records: records,
+      status: 'FINALIZED'
+    };
+    const updatedHistory = [...payrollHistory, run];
+    setPayrollHistory(updatedHistory);
+    persist('erp_payroll_history', updatedHistory);
+
+    // Record as Expense in GL
+    const tx: Transaction = {
+      id: `tx-pr-${run.id}`,
+      date: run.dateGenerated,
+      type: 'EXPENSE',
+      category: 'Labor Expense',
+      amount: total,
+      method: 'TRANSFER',
+      description: `Payroll Disbursal - ${month}`
+    };
+    addTransaction(tx);
+  };
+
+  const addPurchase = (purchase: PurchaseOrder) => {
+    const u = [...purchases, purchase];
+    setPurchases(u);
+    persist('erp_purchases', u);
+    
+    // Record as Expense in GL if paid
+    if (purchase.status === 'PAID') {
+       const tx: Transaction = {
+          id: `tx-pur-${purchase.id}`,
+          date: purchase.date,
+          type: 'EXPENSE',
+          category: purchase.category === 'INVENTORY' ? 'Inventory Asset' : 'Chemical Expense',
+          amount: purchase.amount,
+          method: 'TRANSFER',
+          description: `Purchase: ${purchase.vendorName} - ${purchase.itemName}`
+       };
+       addTransaction(tx);
+    }
   };
 
   return (
@@ -344,10 +411,10 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
       isCloudConnected, syncStatus, lastSyncError: null, connectToCloud, syncAllLocalToCloud: async () => {},
       addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
-      addService, updateService, deleteService, bulkAddServices: (s) => {}, restoreData, resetToFactory, 
+      addService, updateService, deleteService, restoreData, resetToFactory, getSystemState,
       addCustomer: (c) => { const u = [...customers, c]; setCustomers(u); persist('erp_customers', u); },
       updateCustomer: (c) => { const u = customers.map(x => x.id === c.id ? c : x); setCustomers(u); persist('erp_customers', u); },
-      addPurchase: (p) => {}, addTransaction, bulkProcessJournal, bulkAddPurchases: (p) => {}, executePayroll
+      addPurchase, addTransaction, bulkProcessJournal, executePayroll
     }}>
       {children}
     </ERPContext.Provider>
