@@ -90,10 +90,8 @@ export const MigrationAssistant: React.FC = () => {
     alert('✅ Credentials Updated!');
   };
 
-  // ROBUST NUMERIC CLEANER FOR EXCEL " 4,068.00 " FORMAT
   const cleanNum = (val: string) => {
       if (!val || val.trim() === '' || val === '-' || val.includes('#')) return 0;
-      // Remove quotes, commas, and all non-numeric chars except decimal and minus
       const cleaned = val.replace(/[",\s]/g, '');
       const parsed = parseFloat(cleaned);
       return isFinite(parsed) ? parsed : 0;
@@ -107,13 +105,11 @@ export const MigrationAssistant: React.FC = () => {
       const reader = new FileReader();
       reader.onload = async (event) => {
           const text = event.target?.result as string;
-          // Simple CSV line parser that respects quoted commas
           const rows = text.split('\n').filter(r => r.trim()).map(row => {
               const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
               return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
           });
 
-          // FILTER: Skip headers, summary rows
           const dataRows = rows.filter(row => {
              if (row.length < 5) return false;
              const firstCol = (row[0] || '').toLowerCase();
@@ -126,47 +122,62 @@ export const MigrationAssistant: React.FC = () => {
           const newTxs: Transaction[] = [];
           dataRows.forEach((row, idx) => {
               // CSV Columns: [0]Date, [1]Account Name, [2]Account Type, [3]Debit, [4]Credit, [5]Description
-              const date = row[0] || new Date().toISOString().split('T')[0];
+              const dateRaw = row[0] || '';
+              // Normalize date from DD/MM/YYYY to YYYY-MM-DD
+              let date = new Date().toISOString().split('T')[0];
+              if (dateRaw.includes('/')) {
+                  const parts = dateRaw.split('/');
+                  if (parts.length === 3) {
+                      date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+                  }
+              } else if (dateRaw.includes('.')) {
+                  const parts = dateRaw.split('.');
+                  if (parts.length === 3) {
+                      date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+                  }
+              }
+
               const accName = row[1] || 'Unknown';
               const accType = (row[2] || '').toUpperCase();
               const debit = cleanNum(row[3]);
               const credit = cleanNum(row[4]);
               const desc = row[5] || accName;
 
-              // ACCOUNTING LOGIC:
-              // Only record in Transaction History (History Tab) if the account is Revenue or Expense.
-              // Everything else (Equity, Asset, Liability) only updates the balance sheet (hidden from History list).
+              // ACCOUNTING LOGIC (THE FIX):
+              // 1. Only 'Expense' or 'Revenue/Income' types go into the P&L Transaction History.
+              // 2. Equity, Asset, Liability lines are BALANCING entries and should NOT be in the History List
+              //    because they would double-count your revenue/expenses.
               
-              if (accType.includes('EXPENSE') && debit > 0) {
+              if (accType.includes('EXPENSE')) {
                   newTxs.push({ 
                       id: `imp-exp-${Date.now()}-${idx}`, 
                       date, 
                       type: 'EXPENSE', 
                       category: accName, 
-                      amount: debit, 
+                      amount: debit || credit, // In your CSV, Expenses usually have a Debit value
                       description: desc, 
                       method: 'TRANSFER' 
                   });
-              } else if ((accType.includes('REVENUE') || accType.includes('INCOME')) && credit > 0) {
+              } else if (accType.includes('REVENUE') || accType.includes('INCOME')) {
                   newTxs.push({ 
                       id: `imp-rev-${Date.now()}-${idx}`, 
                       date, 
                       type: 'INCOME', 
                       category: accName, 
-                      amount: credit, 
+                      amount: credit || debit, // Revenues usually have a Credit value
                       description: desc, 
                       method: 'TRANSFER' 
                   });
               }
-              // Note: Other legs like "Owner's Investment" (Equity) are processed via updateLedger 
-              // which happens automatically in bulkAddTransactions.
+              // Skip adding Asset, Liability, Equity to History array to avoid the "Zeroing Out" Dashboard bug.
           });
 
           if (newTxs.length === 0) {
-              alert("Import Error: No valid 'Expense' or 'Revenue' rows found. Ensure the 'Account Type' column contains keywords like Expense, Revenue, or Income.");
+              alert("Import Error: No valid P&L rows (Expense/Revenue) found. Ensure 'Account Type' column contains these keywords.");
           } else if (window.confirm(`Detected ${newTxs.length} P&L entries. Proceed with import?`)) {
-              bulkAddTransactions(newTxs);
-              alert(`Successfully imported ${newTxs.length} entries into the ledger history.`);
+              // We pass true to 'skipAutoOffset' so the app doesn't manually guess the Cash leg.
+              bulkAddTransactions(newTxs, true);
+              alert(`Successfully imported ${newTxs.length} historical ledger entries.`);
           }
           setImportLoading(false);
           e.target.value = '';
@@ -240,7 +251,7 @@ export const MigrationAssistant: React.FC = () => {
                     <div className="mt-4 p-4 bg-slate-900 rounded-lg border border-slate-700">
                         <p className="text-[10px] font-black text-indigo-400 uppercase mb-1">STRICT 6-COLUMN ORDER:</p>
                         <p className="text-[9px] font-mono text-white leading-tight bg-black/30 p-2 rounded">Date, Account Name, Account Type, Debit, Credit, Description</p>
-                        <p className="text-[9px] text-slate-400 mt-2 italic">* Offset entries (Equity/Asset legs) are correctly excluded from the P&L list.</p>
+                        <p className="text-[9px] text-slate-400 mt-2 italic">* Logic Fixed: Equity/Asset offsets are correctly excluded from P&L to stop zero-out bug.</p>
                     </div>
                 </div>
             </div>
