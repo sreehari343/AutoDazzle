@@ -3,17 +3,20 @@ import { useERP } from '../contexts/ERPContext.tsx';
 import { X, Plus, Upload, Trash2, Edit, Search, FileSpreadsheet, Info, Car } from 'lucide-react';
 import { Service } from '../types.ts';
 
-// PRICING INPUT HELPER (OUTSIDE COMPONENT TO PREVENT RE-RENDER FOCUS LOSS)
+// PRICING INPUT HELPER - CRYSTAL CLEAR UI
 const PricingField = ({ label, value, onChange }: { label: string, value: number, onChange: (val: number) => void }) => (
   <div className="space-y-1">
-      <label className="text-[11px] font-black text-slate-700 uppercase block tracking-wider">{label} Rate (₹)</label>
-      <input 
-          type="number" 
-          value={value === 0 ? '' : value} 
-          onChange={e => onChange(parseFloat(e.target.value) || 0)} 
-          className="w-full p-3 border-2 border-slate-300 rounded-lg text-sm font-black text-slate-900 bg-white focus:border-red-600 outline-none shadow-sm transition-all" 
-          placeholder="0.00"
-      />
+      <label className="text-[12px] font-black text-slate-800 uppercase block tracking-widest">{label} Rate (INR)</label>
+      <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+          <input 
+              type="number" 
+              value={value === 0 ? '' : value} 
+              onChange={e => onChange(parseFloat(e.target.value) || 0)} 
+              className="w-full p-4 pl-8 border-2 border-slate-300 rounded-xl text-lg font-black text-black bg-white focus:border-red-600 focus:ring-4 focus:ring-red-600/10 outline-none shadow-sm transition-all" 
+              placeholder="0.00"
+          />
+      </div>
   </div>
 );
 
@@ -130,13 +133,13 @@ export const Operations: React.FC = () => {
         </div>
         <div className="relative flex-1 max-w-sm">
              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
-             <input type="text" placeholder="Filter packages..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2 border-2 border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-900 font-bold outline-none focus:border-red-600 transition-all" />
+             <input type="text" placeholder="Filter packages..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-3 border-2 border-slate-200 rounded-lg text-sm bg-slate-50 text-black font-bold outline-none focus:border-red-600 transition-all" />
         </div>
         <div className="flex gap-2">
           {canEdit && (
              <>
-                <button onClick={() => setIsImportOpen(true)} className="bg-white border-2 border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-[10px] font-black shadow-sm flex items-center uppercase hover:bg-slate-50 transition-all"><Upload size={14} className="mr-2" /> Bulk CSV</button>
-                <button onClick={handleOpenAdd} className="bg-red-600 text-white px-5 py-2 rounded-lg text-[10px] font-black shadow-lg flex items-center uppercase hover:bg-red-700 transition-all"><Plus size={16} className="mr-2" /> New Package</button>
+                <button onClick={() => setIsImportOpen(true)} className="bg-white border-2 border-slate-200 text-slate-700 px-4 py-2.5 rounded-lg text-[10px] font-black shadow-sm flex items-center uppercase hover:bg-slate-50 transition-all tracking-wider"><Upload size={14} className="mr-2" /> Bulk CSV</button>
+                <button onClick={handleOpenAdd} className="bg-red-600 text-white px-5 py-2.5 rounded-lg text-[10px] font-black shadow-lg flex items-center uppercase hover:bg-red-700 transition-all tracking-wider"><Plus size={16} className="mr-2" /> New Package</button>
              </>
           )}
         </div>
@@ -148,10 +151,10 @@ export const Operations: React.FC = () => {
             <thead className="bg-slate-900 text-white border-b border-slate-800">
               <tr>
                 <th className="px-6 py-4 font-black uppercase text-[10px] tracking-widest">Package Details</th>
-                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Hatchback</th>
-                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Sedan</th>
-                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">SUV / MUV</th>
-                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-red-900/50">Premium</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Hatchback</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Sedan</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">SUV / MUV</th>
+                <th className="px-4 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-red-900/50">Premium</th>
                 {canEdit && <th className="px-6 py-4 font-black uppercase text-[10px] tracking-widest text-center">Manage</th>}
               </tr>
             </thead>
@@ -162,10 +165,10 @@ export const Operations: React.FC = () => {
                     <div className="font-black text-slate-900 text-sm uppercase">{s.name}</div>
                     <div className="text-[10px] text-slate-400 font-mono uppercase tracking-tighter">{s.sku}</div>
                   </td>
-                  <td className="px-3 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.HATCHBACK?.toLocaleString() || 0}</td>
-                  <td className="px-3 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.SEDAN?.toLocaleString() || 0}</td>
-                  <td className="px-3 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.SUV_MUV?.toLocaleString() || 0}</td>
-                  <td className="px-3 py-4 text-right bg-red-50/30 font-black text-red-700">₹{s.prices.LUXURY?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.HATCHBACK?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.SEDAN?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-blue-50/20 font-bold text-slate-900">₹{s.prices.SUV_MUV?.toLocaleString() || 0}</td>
+                  <td className="px-4 py-4 text-right bg-red-50/30 font-black text-red-700">₹{s.prices.LUXURY?.toLocaleString() || 0}</td>
                   {canEdit && (
                       <td className="px-6 py-4">
                           <div className="flex justify-center gap-2">
@@ -181,45 +184,46 @@ export const Operations: React.FC = () => {
         </div>
       </div>
       
-      {/* EDIT MODAL - FIXED VISIBILITY & FOCUS */}
+      {/* EDIT MODAL - ULTRA VISIBILITY OVERHAUL */}
       {isModalOpen && (
-          <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden text-slate-900 border-4 border-slate-900 animate-fade-in-up">
-                  <div className="p-6 border-b-2 border-slate-200 flex justify-between items-center bg-slate-50">
+                  <div className="p-8 border-b-4 border-slate-100 flex justify-between items-center bg-slate-50">
                       <div>
-                          <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">{editingId ? 'Edit Package Edition' : 'Create New Package'}</h3>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Global Rate Configuration</p>
+                          <h3 className="text-2xl font-black text-black uppercase tracking-tight">{editingId ? 'Edit Package Rates' : 'Create New Package'}</h3>
+                          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-1">Universal Service Pricing Engine</p>
                       </div>
-                      <button onClick={() => setIsModalOpen(false)} className="p-2 bg-white rounded-full text-slate-500 border border-slate-300 hover:text-red-600 hover:border-red-600 transition-all"><X size={24}/></button>
+                      <button onClick={() => setIsModalOpen(false)} className="p-3 bg-white rounded-full text-slate-500 border-2 border-slate-300 hover:text-red-600 hover:border-red-600 transition-all shadow-md"><X size={28}/></button>
                   </div>
-                  <form onSubmit={handleSubmit} className="p-8 space-y-8 bg-white">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div className="space-y-1">
-                              <label className="text-[11px] font-black text-slate-700 uppercase block tracking-wider">Service Title</label>
+                  <form onSubmit={handleSubmit} className="p-10 space-y-10 bg-white">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-2">
+                              <label className="text-[12px] font-black text-slate-800 uppercase block tracking-widest">Service Package Title</label>
                               <input 
                                 required 
                                 value={formData.name} 
                                 onChange={e => setFormData({...formData, name: e.target.value})} 
-                                className="w-full p-3 border-2 border-slate-300 rounded-lg text-sm font-black text-slate-900 bg-white focus:border-red-600 outline-none shadow-sm" 
+                                className="w-full p-4 border-2 border-slate-300 rounded-xl text-lg font-black text-black bg-white focus:border-red-600 focus:ring-4 focus:ring-red-600/5 outline-none shadow-inner" 
                                 placeholder="e.g. Foam Wash Deluxe"
                               />
                           </div>
-                          <div className="space-y-1">
-                              <label className="text-[11px] font-black text-slate-700 uppercase block tracking-wider">System SKU Code</label>
+                          <div className="space-y-2">
+                              <label className="text-[12px] font-black text-slate-800 uppercase block tracking-widest">System Record SKU</label>
                               <input 
-                                placeholder="AUTO-GEN" 
+                                placeholder="AUTO-GENERATED" 
                                 value={formData.sku} 
                                 onChange={e => setFormData({...formData, sku: e.target.value})} 
-                                className="w-full p-3 border-2 border-slate-200 rounded-lg text-sm font-mono font-bold text-slate-900 bg-slate-50" 
+                                className="w-full p-4 border-2 border-slate-200 rounded-xl text-lg font-mono font-bold text-slate-700 bg-slate-100" 
                               />
                           </div>
                       </div>
 
-                      <div className="bg-slate-50 p-6 rounded-xl border-2 border-slate-200 space-y-6 shadow-inner">
-                          <h4 className="text-[11px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-2 border-b-2 border-slate-200 pb-2">
-                             <Car size={16} className="text-red-600"/> PRICING BY VEHICLE SEGMENT (INR)
+                      <div className="bg-slate-50 p-8 rounded-2xl border-2 border-slate-200 space-y-8 shadow-inner relative">
+                          <div className="absolute -top-4 left-6 px-4 py-1 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.3em] rounded-full shadow-lg">Rate Matrix</div>
+                          <h4 className="text-[12px] font-black text-slate-900 uppercase tracking-widest flex items-center gap-3 border-b-2 border-slate-200 pb-4">
+                             <Car size={20} className="text-red-600"/> PRICING BY VEHICLE SEGMENT
                           </h4>
-                          <div className="grid grid-cols-2 gap-6">
+                          <div className="grid grid-cols-2 gap-8">
                               <PricingField label="Hatchback" value={formData.price_HATCHBACK} onChange={(val) => setFormData({...formData, price_HATCHBACK: val})} />
                               <PricingField label="Sedan" value={formData.price_SEDAN} onChange={(val) => setFormData({...formData, price_SEDAN: val})} />
                               <PricingField label="SUV / MUV" value={formData.price_SUV_MUV} onChange={(val) => setFormData({...formData, price_SUV_MUV: val})} />
@@ -227,10 +231,10 @@ export const Operations: React.FC = () => {
                           </div>
                       </div>
 
-                      <div className="flex gap-4">
-                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-4 border-2 border-slate-300 rounded-xl text-xs font-black uppercase text-slate-600 bg-white hover:bg-slate-50 transition-all">Cancel</button>
-                          <button type="submit" className="flex-[2] py-4 bg-slate-900 text-white rounded-xl text-xs font-black uppercase shadow-2xl hover:bg-black transition-all transform hover:-translate-y-1">
-                              {editingId ? 'Confirm Rates Update' : 'Finalize Service'}
+                      <div className="flex gap-6">
+                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-5 border-2 border-slate-300 rounded-2xl text-xs font-black uppercase text-slate-600 bg-white hover:bg-slate-50 hover:border-slate-400 transition-all">Abort Changes</button>
+                          <button type="submit" className="flex-[2] py-5 bg-black text-white rounded-2xl text-sm font-black uppercase shadow-2xl hover:bg-slate-900 transition-all transform hover:-translate-y-1 active:translate-y-0 tracking-[0.2em]">
+                              {editingId ? 'Push Updates to Menu' : 'Finalize New Service'}
                           </button>
                       </div>
                   </form>
@@ -242,32 +246,32 @@ export const Operations: React.FC = () => {
       {isImportOpen && canEdit && (
           <div className="fixed inset-0 bg-black/80 z-[9999] flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl text-black border-4 border-indigo-900 animate-fade-in-up">
-                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-                      <h3 className="text-lg font-black text-indigo-900 uppercase flex items-center gap-2"><FileSpreadsheet size={18}/> Service Batch Uploader</h3>
-                      <button onClick={() => setIsImportOpen(false)} className="p-2 bg-white rounded-full text-slate-500 border border-slate-300 hover:text-red-500 transition-all"><X size={20}/></button>
+                  <div className="p-8 border-b-2 border-slate-100 flex justify-between items-center bg-slate-50">
+                      <h3 className="text-xl font-black text-indigo-900 uppercase flex items-center gap-2"><FileSpreadsheet size={24}/> Service Batch Importer</h3>
+                      <button onClick={() => setIsImportOpen(false)} className="p-2 bg-white rounded-full text-slate-500 border border-slate-200 hover:text-red-500 transition-all shadow-sm"><X size={24}/></button>
                   </div>
-                  <div className="p-8">
-                      <div className="p-4 rounded-xl mb-6 border-2 border-indigo-100 bg-indigo-50/50">
-                          <div className="flex justify-between items-start mb-2">
-                              <h4 className="text-[10px] font-black uppercase text-indigo-800 flex items-center gap-1"><Info size={10}/> 5 COLUMN SEQUENCE</h4>
+                  <div className="p-10">
+                      <div className="p-6 rounded-2xl mb-8 border-2 border-indigo-100 bg-indigo-50/50">
+                          <div className="flex justify-between items-start mb-4">
+                              <h4 className="text-[11px] font-black uppercase text-indigo-800 flex items-center gap-2 tracking-widest"><Info size={14}/> Column Sequence (5 Cols)</h4>
                               <button onClick={() => {
                                   navigator.clipboard.writeText("Foam Wash, 350, 450, 600, 1000");
-                                  alert("Copied!");
-                              }} className="text-[9px] bg-white border border-indigo-200 px-3 py-1 rounded font-black uppercase hover:bg-white transition-all shadow-sm">Sample</button>
+                                  alert("Copied to clipboard!");
+                              }} className="text-[10px] bg-white border-2 border-indigo-200 px-4 py-1.5 rounded-lg font-black uppercase hover:bg-indigo-600 hover:text-white transition-all shadow-md">Copy Sample</button>
                           </div>
-                          <code className="block bg-white p-3 rounded-lg text-[10px] font-mono text-slate-700 border border-indigo-100 shadow-inner">
+                          <code className="block bg-white p-4 rounded-xl text-xs font-mono text-slate-700 border-2 border-indigo-100 shadow-inner">
                              Name, Hatchback Rate, Sedan Rate, SUV Rate, Premium Rate
                           </code>
                       </div>
                       <textarea 
-                        className="w-full h-48 p-4 border-2 border-slate-300 rounded-xl font-mono text-xs focus:border-indigo-600 outline-none text-slate-900 bg-white shadow-inner" 
-                        placeholder="Foam Wash, 300, 400, 500, 800" 
+                        className="w-full h-56 p-5 border-2 border-slate-300 rounded-2xl font-mono text-sm focus:border-indigo-600 outline-none text-black bg-white shadow-inner" 
+                        placeholder="Foam Wash Deluxe, 300, 400, 500, 800" 
                         value={importText} 
                         onChange={e => setImportText(e.target.value)} 
                       />
-                      <div className="mt-6 flex gap-4">
-                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-3 border-2 border-slate-300 rounded-xl text-xs font-black uppercase text-slate-600 bg-white">Cancel</button>
-                          <button onClick={handleBulkImport} className="flex-[2] py-3 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase shadow-lg hover:bg-indigo-700 transition-all">Begin Import</button>
+                      <div className="mt-8 flex gap-6">
+                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-4 border-2 border-slate-300 rounded-2xl text-xs font-black uppercase text-slate-500 bg-white">Cancel</button>
+                          <button onClick={handleBulkImport} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase shadow-xl hover:bg-indigo-700 transition-all tracking-widest">Begin Bulk Import</button>
                       </div>
                   </div>
               </div>
