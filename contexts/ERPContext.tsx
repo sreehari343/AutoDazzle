@@ -99,31 +99,33 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
 
-  const updateLedger = (txs: Transaction[], isBulkImport: boolean = false) => {
+  const updateLedgerBalances = (txs: any[], isBulk: boolean = false) => {
     setAccounts(prev => {
       let updated = [...prev];
       txs.forEach(tx => {
+          // Double Entry Accounting Logic (GAAP):
+          // Asset/Expense accounts INCREASE on DEBIT, DECREASE on CREDIT.
+          // Revenue/Liability/Equity accounts INCREASE on CREDIT, DECREASE on DEBIT.
+          
           updated = updated.map(acc => {
-              const isMatch = acc.name.toLowerCase() === tx.category.toLowerCase();
+              const matchesAccount = acc.name.toLowerCase() === tx.category.toLowerCase();
               
-              // IF MANUAL APP ENTRY: Always auto-offset Cash Account (1000)
-              if (!isBulkImport && acc.code === '1000') {
+              // IF MANUAL ENTRY: Auto-offset Cash Account (1000)
+              if (!isBulk && acc.code === '1000') {
                   if (tx.type === 'INCOME') return { ...acc, balance: acc.balance + tx.amount };
                   if (tx.type === 'EXPENSE') return { ...acc, balance: acc.balance - tx.amount };
               }
 
-              // IF MATCHING ACCOUNT: Update based on Debit/Credit rules
-              if (isMatch) {
-                  const isDebitNature = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
-                  const isCreditNature = !isDebitNature;
-
-                  // CSV Importer logic: EXPENSE = Debit Leg, INCOME = Credit Leg
-                  if (isDebitNature) {
-                      const change = (tx.type === 'EXPENSE') ? tx.amount : -tx.amount;
-                      return { ...acc, balance: acc.balance + change };
-                  } else if (isCreditNature) {
-                      const change = (tx.type === 'INCOME') ? tx.amount : -tx.amount;
-                      return { ...acc, balance: acc.balance + change };
+              if (matchesAccount) {
+                  const isAssetOrExpense = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
+                  
+                  // In our tagging system from MigrationAssistant:
+                  // DEBIT leg is marked as 'EXPENSE'
+                  // CREDIT leg is marked as 'INCOME'
+                  if (isAssetOrExpense) {
+                      return { ...acc, balance: acc.balance + (tx.type === 'EXPENSE' ? tx.amount : -tx.amount) };
+                  } else {
+                      return { ...acc, balance: acc.balance + (tx.type === 'INCOME' ? tx.amount : -tx.amount) };
                   }
               }
               return acc;
@@ -171,24 +173,31 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addTransaction = (tx: Transaction) => {
-    const newTx = [...transactions, tx];
-    setTransactions(newTx);
-    persist('erp_transactions', newTx);
-    updateLedger([tx], false);
+    const newTxList = [...transactions, tx];
+    setTransactions(newTxList);
+    persist('erp_transactions', newTxList);
+    updateLedgerBalances([tx], false);
   };
 
   const bulkAddTransactions = (txs: Transaction[], skipAutoOffset: boolean = false) => {
-    // Only store actual Revenue/Expense lines in the persistent transaction history for P&L clarity.
-    // However, all legs must be passed to updateLedger to balance the books.
-    const plOnly = txs.filter(tx => {
-        const acc = accounts.find(a => a.name.toLowerCase() === tx.category.toLowerCase());
-        return !acc || acc.type === AccountType.REVENUE || acc.type === AccountType.EXPENSE;
-    });
+    // CRITICAL BUG FIX (THE ZERO-OUT BUG):
+    // In a Double-Entry CSV, every sale has two rows (e.g. Revenue row + Cash row).
+    // We only add the REVENUE/EXPENSE row to the 'transactions' history so the dashboard works.
+    // We pass BOTH rows to updateLedgerBalances so the Cash balance is updated.
     
-    const newHistory = [...transactions, ...plOnly];
+    const pAndLOnly = txs.filter(tx => {
+        const targetAcc = accounts.find(a => a.name.toLowerCase() === tx.category.toLowerCase());
+        // If account type is Revenue or Expense, it belongs in the Transaction History (P&L).
+        // If it's Asset, Liability, or Equity, it's just a balancing leg for the ledger.
+        return targetAcc && (targetAcc.type === AccountType.REVENUE || targetAcc.type === AccountType.EXPENSE);
+    });
+
+    const newHistory = [...transactions, ...pAndLOnly];
     setTransactions(newHistory);
     persist('erp_transactions', newHistory);
-    updateLedger(txs, true); // Process full double-entry list to balance accounts
+    
+    // Balance the entire ledger using full list
+    updateLedgerBalances(txs, true);
   };
 
   const addJob = (job: JobCard) => {
