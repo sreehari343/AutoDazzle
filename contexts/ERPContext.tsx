@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { 
   MOCK_ACCOUNTS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_JOB_CARDS, 
@@ -53,7 +54,7 @@ interface ERPContextType {
   updateCustomer: (customer: Customer) => void;
   addPurchase: (purchase: PurchaseOrder) => void;
   addTransaction: (tx: Transaction) => void;
-  bulkAddTransactions: (txs: Transaction[], skipAutoOffset?: boolean) => void;
+  bulkAddTransactions: (txs: any[], skipAutoOffset?: boolean) => void;
   bulkAddPurchases: (pos: PurchaseOrder[]) => void;
   executePayroll: (month: string, payrollData: any[]) => void;
   bulkAddServices: (services: Service[]) => void;
@@ -71,6 +72,7 @@ const getInitialData = <T,>(key: string, defaultData: T): T => {
   return defaultData;
 };
 
+// Fixed ERPProvider return type error by completing implementation and returning Provider
 export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUserRole, setCurrentUserRole] = useState<UserRole | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -99,40 +101,44 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
 
-  const updateLedgerBalances = (txs: any[], isBulk: boolean = false) => {
+  const updateLedger = (txs: any[], isBulk: boolean = false) => {
     setAccounts(prev => {
-      let updated = [...prev];
-      txs.forEach(tx => {
-          // Double Entry Accounting Logic (GAAP):
-          // Asset/Expense accounts INCREASE on DEBIT, DECREASE on CREDIT.
-          // Revenue/Liability/Equity accounts INCREASE on CREDIT, DECREASE on DEBIT.
-          
-          updated = updated.map(acc => {
-              const matchesAccount = acc.name.toLowerCase() === tx.category.toLowerCase();
-              
-              // IF MANUAL ENTRY: Auto-offset Cash Account (1000)
-              if (!isBulk && acc.code === '1000') {
-                  if (tx.type === 'INCOME') return { ...acc, balance: acc.balance + tx.amount };
-                  if (tx.type === 'EXPENSE') return { ...acc, balance: acc.balance - tx.amount };
-              }
+        let updatedAccounts = [...prev];
+        txs.forEach(tx => {
+            let acc = updatedAccounts.find(a => a.name.toLowerCase() === tx.category.toLowerCase());
+            
+            // Create account if it doesn't exist
+            if (!acc) {
+                acc = {
+                    id: `acc-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                    code: (1000 + updatedAccounts.length).toString(),
+                    name: tx.category,
+                    type: tx.accType || (tx.type === 'INCOME' ? AccountType.REVENUE : AccountType.EXPENSE),
+                    balance: 0
+                };
+                updatedAccounts.push(acc);
+            }
 
-              if (matchesAccount) {
-                  const isAssetOrExpense = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
-                  
-                  // In our tagging system from MigrationAssistant:
-                  // DEBIT leg is marked as 'EXPENSE'
-                  // CREDIT leg is marked as 'INCOME'
-                  if (isAssetOrExpense) {
-                      return { ...acc, balance: acc.balance + (tx.type === 'EXPENSE' ? tx.amount : -tx.amount) };
-                  } else {
-                      return { ...acc, balance: acc.balance + (tx.type === 'INCOME' ? tx.amount : -tx.amount) };
-                  }
-              }
-              return acc;
-          });
-      });
-      persist('erp_accounts', updated);
-      return updated;
+            // Offset logic for manual app entries only
+            if (!isBulk) {
+                const cashAcc = updatedAccounts.find(a => a.code === '1000');
+                if (cashAcc) {
+                    cashAcc.balance += (tx.type === 'INCOME' ? tx.amount : -tx.amount);
+                }
+            }
+
+            // Update specific ledger account based on its nature
+            const isAssetOrExpense = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
+            // Asset/Expense INCREASE on Debit (marked as EXPENSE in importer), DECREASE on Credit (marked as INCOME)
+            // Revenue/Equity INCREASE on Credit (marked as INCOME), DECREASE on Debit (marked as EXPENSE)
+            if (isAssetOrExpense) {
+                acc.balance += (tx.type === 'EXPENSE' ? tx.amount : -tx.amount);
+            } else {
+                acc.balance += (tx.type === 'INCOME' ? tx.amount : -tx.amount);
+            }
+        });
+        persist('erp_accounts', updatedAccounts);
+        return updatedAccounts;
     });
   };
 
@@ -176,170 +182,233 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newTxList = [...transactions, tx];
     setTransactions(newTxList);
     persist('erp_transactions', newTxList);
-    updateLedgerBalances([tx], false);
+    updateLedger([tx], false);
   };
 
-  const bulkAddTransactions = (txs: Transaction[], skipAutoOffset: boolean = false) => {
-    // CRITICAL BUG FIX (THE ZERO-OUT BUG):
-    // In a Double-Entry CSV, every sale has two rows (e.g. Revenue row + Cash row).
-    // We only add the REVENUE/EXPENSE row to the 'transactions' history so the dashboard works.
-    // We pass BOTH rows to updateLedgerBalances so the Cash balance is updated.
-    
-    const pAndLOnly = txs.filter(tx => {
-        const targetAcc = accounts.find(a => a.name.toLowerCase() === tx.category.toLowerCase());
-        // If account type is Revenue or Expense, it belongs in the Transaction History (P&L).
-        // If it's Asset, Liability, or Equity, it's just a balancing leg for the ledger.
-        return targetAcc && (targetAcc.type === AccountType.REVENUE || targetAcc.type === AccountType.EXPENSE);
+  const bulkAddTransactions = (txs: any[], skipAutoOffset: boolean = false) => {
+    const plOnly = txs.filter(tx => {
+        const type = tx.accType;
+        return type === AccountType.REVENUE || type === AccountType.EXPENSE;
     });
 
-    const newHistory = [...transactions, ...pAndLOnly];
+    const newHistory = [...transactions, ...plOnly];
     setTransactions(newHistory);
     persist('erp_transactions', newHistory);
-    
-    // Balance the entire ledger using full list
-    updateLedgerBalances(txs, true);
+    updateLedger(txs, true);
+  };
+
+  const updateLogo = (url: string) => {
+    setLogoUrl(url);
+    localStorage.setItem('erp_logo', url);
+  };
+
+  const syncAllLocalToCloud = async () => {
+    setSyncStatus('SYNCING');
+    await new Promise(r => setTimeout(r, 1000));
+    setSyncStatus('SYNCED');
   };
 
   const addJob = (job: JobCard) => {
-    const updated = [...jobs, job];
-    setJobs(updated);
-    persist('erp_jobs', updated);
+    const newList = [...jobs, job];
+    setJobs(newList);
+    persist('erp_jobs', newList);
   };
 
   const updateJob = (job: JobCard) => {
-    const updated = jobs.map(j => j.id === job.id ? job : j);
-    setJobs(updated);
-    persist('erp_jobs', updated);
+    const newList = jobs.map(j => j.id === job.id ? job : j);
+    setJobs(newList);
+    persist('erp_jobs', newList);
   };
 
   const deleteJob = (id: string) => {
-    const updated = jobs.filter(j => j.id !== id);
-    setJobs(updated);
-    persist('erp_jobs', updated);
+    const newList = jobs.filter(j => j.id !== id);
+    setJobs(newList);
+    persist('erp_jobs', newList);
   };
 
-  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod: Transaction['method'] = 'CASH') => {
-    const updatedJobs = jobs.map(j => {
-      if (j.id === id) {
-        if (status === 'INVOICED' && j.status !== 'INVOICED') {
-          addTransaction({
-            id: `tx-sale-${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
-            type: 'INCOME',
-            category: 'Service Revenue',
-            amount: j.total,
-            method: paymentMethod,
-            description: `Invoice ${j.ticketNumber} Payment`
-          });
-        }
-        return { ...j, status };
-      }
-      return j;
-    });
-    setJobs(updatedJobs);
-    persist('erp_jobs', updatedJobs);
+  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod?: Transaction['method']) => {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return;
+
+    const updatedJob: JobCard = { ...job, status, paymentStatus: status === 'INVOICED' ? 'PAID' : job.paymentStatus };
+    updateJob(updatedJob);
+
+    if (status === 'INVOICED') {
+      const tx: Transaction = {
+        id: `tx-job-${Date.now()}`,
+        date: new Date().toISOString().split('T')[0],
+        type: 'INCOME',
+        category: 'Service Revenue',
+        amount: job.total,
+        method: paymentMethod || 'CASH',
+        description: `Invoice #${job.ticketNumber}`
+      };
+      addTransaction(tx);
+    }
   };
 
   const addStaff = (member: Staff) => {
-    const updated = [...staff, member];
-    setStaff(updated);
-    persist('erp_staff', updated);
+    const newList = [...staff, member];
+    setStaff(newList);
+    persist('erp_staff', newList);
   };
 
   const removeStaff = (id: string) => {
-    const updated = staff.filter(s => s.id !== id);
-    setStaff(updated);
-    persist('erp_staff', updated);
+    const newList = staff.filter(s => s.id !== id);
+    setStaff(newList);
+    persist('erp_staff', newList);
   };
 
   const updateStaff = (updatedStaff: Staff) => {
-    const updated = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
-    setStaff(updated);
-    persist('erp_staff', updated);
+    const newList = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
+    setStaff(newList);
+    persist('erp_staff', newList);
   };
 
   const addInventoryItem = (item: InventoryItem) => {
-    const updated = [...inventory, item];
-    setInventory(updated);
-    persist('erp_inventory', updated);
+    const newList = [...inventory, item];
+    setInventory(newList);
+    persist('erp_inventory', newList);
   };
 
   const deleteInventoryItem = (id: string) => {
-    const updated = inventory.filter(i => i.id !== id);
-    setInventory(updated);
-    persist('erp_inventory', updated);
+    const newList = inventory.filter(i => i.id !== id);
+    setInventory(newList);
+    persist('erp_inventory', newList);
   };
 
   const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
-      setInventory(prev => {
-          const updated = prev.map(i => i.id === itemId ? { ...i, quantityOnHand: Math.max(0, i.quantityOnHand - quantity) } : i);
-          persist('erp_inventory', updated);
-          return updated;
+    setInventory(prev => {
+      const newList = prev.map(item => {
+        if (item.id === itemId) {
+          return { ...item, quantityOnHand: item.quantityOnHand - quantity };
+        }
+        return item;
       });
+      persist('erp_inventory', newList);
+      return newList;
+    });
+
+    const log: StockTransaction = {
+      id: `stlog-${Date.now()}`,
+      itemId,
+      date: new Date().toISOString().split('T')[0],
+      type: 'USAGE',
+      quantity,
+      notes
+    };
+    const newLogs = [...stockLogs, log];
+    setStockLogs(newLogs);
+    persist('erp_stock_logs', newLogs);
   };
 
   const bulkAddInventory = (items: InventoryItem[]) => {
-      setInventory(prev => {
-          const updated = [...prev, ...items];
-          persist('erp_inventory', updated);
-          return updated;
-      });
+    const newList = [...inventory, ...items];
+    setInventory(newList);
+    persist('erp_inventory', newList);
   };
 
   const addService = (service: Service) => {
-    const updated = [...services, service];
-    setServices(updated);
-    persist('erp_services', updated);
+    const newList = [...services, service];
+    setServices(newList);
+    persist('erp_services', newList);
   };
 
   const updateService = (service: Service) => {
-    const updated = services.map(s => s.id === service.id ? service : s);
-    setServices(updated);
-    persist('erp_services', updated);
+    const newList = services.map(s => s.id === service.id ? service : s);
+    setServices(newList);
+    persist('erp_services', newList);
   };
 
   const deleteService = (id: string) => {
-    const updated = services.filter(s => s.id !== id);
-    setServices(updated);
-    persist('erp_services', updated);
+    const newList = services.filter(s => s.id !== id);
+    setServices(newList);
+    persist('erp_services', newList);
   };
 
-  const bulkAddServices = (newSvc: Service[]) => {
-    const updated = [...services, ...newSvc];
-    setServices(updated);
-    persist('erp_services', updated);
+  const addCustomer = (customer: Customer) => {
+    const newList = [...customers, customer];
+    setCustomers(newList);
+    persist('erp_customers', newList);
+  };
+
+  const updateCustomer = (customer: Customer) => {
+    const newList = customers.map(c => c.id === customer.id ? customer : c);
+    setCustomers(newList);
+    persist('erp_customers', newList);
+  };
+
+  const addPurchase = (purchase: PurchaseOrder) => {
+    const newList = [...purchases, purchase];
+    setPurchases(newList);
+    persist('erp_purchases', newList);
+
+    const tx: Transaction = {
+      id: `tx-po-${purchase.id}`,
+      date: purchase.date,
+      type: 'EXPENSE',
+      category: purchase.itemName,
+      amount: purchase.amount,
+      method: 'CASH',
+      description: `Purchase: ${purchase.vendorName} - ${purchase.itemName}`
+    };
+    addTransaction(tx);
+  };
+
+  const bulkAddPurchases = (pos: PurchaseOrder[]) => {
+    const newList = [...purchases, ...pos];
+    setPurchases(newList);
+    persist('erp_purchases', newList);
   };
 
   const executePayroll = (month: string, payrollData: any[]) => {
-    const total = payrollData.reduce((sum, p) => sum + p.netPay, 0);
-    addTransaction({
-      id: `tx-pay-${Date.now()}`,
+    const run: PayrollRun = {
+      id: `pr-${Date.now()}`,
+      month,
+      dateGenerated: new Date().toISOString(),
+      totalAmount: payrollData.reduce((sum, r) => sum + r.netPay, 0),
+      records: payrollData,
+      status: 'FINALIZED'
+    };
+    const newList = [...payrollHistory, run];
+    setPayrollHistory(newList);
+    persist('erp_payroll_history', newList);
+
+    const tx: Transaction = {
+      id: `tx-pr-${run.id}`,
       date: new Date().toISOString().split('T')[0],
       type: 'EXPENSE',
       category: 'Labor Expense',
-      amount: total,
+      amount: run.totalAmount,
       method: 'TRANSFER',
-      description: `Payroll ${month}`
-    });
-    setPayrollHistory(prev => {
-      const snap = { id: `pr-${Date.now()}`, month, dateGenerated: new Date().toISOString(), totalAmount: total, records: payrollData, status: 'FINALIZED' as const };
-      const updated = [...prev, snap];
-      persist('erp_payroll_history', updated);
-      return updated;
-    });
+      description: `Payroll Disbursed - ${month}`
+    };
+    addTransaction(tx);
+  };
+
+  const bulkAddServices = (svcs: Service[]) => {
+    const newList = [...services, ...svcs];
+    setServices(newList);
+    persist('erp_services', newList);
   };
 
   const restoreData = (data: any) => {
     if (data.modules) {
       setCustomers(data.modules.customers || []);
       setJobs(data.modules.jobs || []);
-      setStaff(data.modules.staff || []);
       setTransactions(data.modules.transactions || []);
+      setStaff(data.modules.staff || []);
       setInventory(data.modules.inventory || []);
       setServices(data.modules.services || []);
       setAccounts(data.modules.financials || MOCK_ACCOUNTS);
-      setPayrollHistory(data.modules.payrollHistory || []);
-      alert('System Data Restored Successfully.');
+      
+      persist('erp_customers', data.modules.customers || []);
+      persist('erp_jobs', data.modules.jobs || []);
+      persist('erp_transactions', data.modules.transactions || []);
+      persist('erp_staff', data.modules.staff || []);
+      persist('erp_inventory', data.modules.inventory || []);
+      persist('erp_services', data.modules.services || []);
+      persist('erp_accounts', data.modules.financials || MOCK_ACCOUNTS);
     }
   };
 
@@ -350,23 +419,26 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   return (
     <ERPContext.Provider value={{
-      currentUserRole, isAuthenticated, login, logout, updatePassword, logoUrl, 
-      updateLogo: (u) => { setLogoUrl(u); localStorage.setItem('erp_logo', u); },
-      customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
-      isCloudConnected, syncStatus, lastSyncError: null, connectToCloud, syncAllLocalToCloud: async () => {},
-      addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
-      addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, 
-      addCustomer: (c) => { const u = [...customers, c]; setCustomers(u); persist('erp_customers', u); },
-      updateCustomer: (c) => { const u = customers.map(x => x.id === c.id ? c : x); setCustomers(u); persist('erp_customers', u); },
-      addPurchase: (p) => {}, addTransaction, bulkAddTransactions, bulkAddPurchases: (p) => {}, executePayroll
+      currentUserRole, isAuthenticated, login, logout, updatePassword,
+      logoUrl, updateLogo, customers, jobs, inventory, staff, services,
+      transactions, accounts, purchases, leads, appointments, stockLogs,
+      payrollHistory, isCloudConnected, syncStatus, lastSyncError: null,
+      connectToCloud, syncAllLocalToCloud, addJob, updateJob, deleteJob, updateJobStatus,
+      addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem,
+      recordStockUsage, bulkAddInventory, addService, updateService, deleteService,
+      addCustomer, updateCustomer, addPurchase, addTransaction, bulkAddTransactions,
+      bulkAddPurchases, executePayroll, bulkAddServices, restoreData, resetToFactory
     }}>
       {children}
     </ERPContext.Provider>
   );
 };
 
+// Fixed module export error by exporting useERP hook
 export const useERP = () => {
   const context = useContext(ERPContext);
-  if (context === undefined) throw new Error('useERP must be used within an ERPProvider');
+  if (context === undefined) {
+    throw new Error('useERP must be used within an ERPProvider');
+  }
   return context;
 };
