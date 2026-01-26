@@ -1,211 +1,263 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
+import { analyzeDataStructure } from '../services/geminiService.ts';
+import { AIAnalysisResult, Transaction } from '../types.ts';
 import { useERP } from '../contexts/ERPContext.tsx';
 import { 
   Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
-  Wifi, ImageIcon, Download, ShieldCheck, Image as ImageIconLucide, Trash2, Code, Terminal, AlertTriangle, Check
+  Wifi, ImageIcon, Copy, Sparkles, X, Code, HardDriveUpload, 
+  FileSpreadsheet, FileJson, Landmark, AlertCircle
 } from 'lucide-react';
-import { AccountType } from '../types.ts';
 
 export const MigrationAssistant: React.FC = () => {
   const { 
-    bulkProcessJournal, updatePassword, getSystemState, restoreData, resetToFactory, 
-    updateLogo, logoUrl, syncStatus, isCloudConnected, connectToCloud, syncAllLocalToCloud, lastSyncError
+    customers, jobs, transactions, staff, inventory, accounts, purchases, services,
+    restoreData, connectToCloud, isCloudConnected, 
+    logoUrl, updateLogo, updatePassword, bulkAddTransactions, syncAllLocalToCloud,
+    payrollHistory
   } = useERP();
   
-  const [activeTab, setActiveTab] = useState<'MIGRATION' | 'PROFILE' | 'SYSTEM'>('MIGRATION');
-  const [importLoading, setImportLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('PROFILE');
+  const [inputText, setInputText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<AIAnalysisResult | null>(null);
+
+  const [passSuper, setPassSuper] = useState('');
+  const [passStaff, setPassStaff] = useState('');
+
   const [cloudUrl, setCloudUrl] = useState(localStorage.getItem('supabase_url') || '');
   const [cloudKey, setCloudKey] = useState(localStorage.getItem('supabase_key') || '');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [showSql, setShowSql] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
 
-  // --- LOGO UPLOAD (FIXED) ---
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      if (!file.type.startsWith('image/')) {
-          alert("❌ Please select a valid image file (PNG/JPG).");
-          return;
-      }
-      if (file.size > 1024 * 1024) { // 1MB limit for localStorage safety
-          alert("❌ Icon too large. Please select an image under 1MB.");
-          return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-          const base64 = event.target?.result as string;
-          updateLogo(base64);
-          alert("✅ Brand Identity Synchronized!");
-      };
-      reader.onerror = () => alert("❌ Error reading file. Try a different image.");
-      reader.readAsDataURL(file);
+  const handleFullSystemBackup = () => {
+    const backupData = {
+      version: '2.3',
+      timestamp: new Date().toISOString(),
+      modules: { customers, jobs, transactions, staff, inventory, services, financials: accounts, payrollHistory, purchases }
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `auto_dazzle_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
   };
 
-  // --- BACKUP LOGIC ---
-  const handleDownloadBackup = () => {
-      const state = getSystemState();
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `AutoDazzle_MasterBackup_${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+  const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (window.confirm("Restore will overwrite current local data. Proceed?")) {
+           restoreData(data);
+        }
+      } catch (err) {
+        alert("Invalid backup file.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
   };
 
-  const handleRestoreBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleConnect = async () => {
+      setIsConnecting(true);
+      await connectToCloud(cloudUrl, cloudKey);
+      setIsConnecting(false);
+  };
+
+  const handleForceSync = async () => {
+      if (!isCloudConnected) return;
+      setIsSyncingAll(true);
+      await syncAllLocalToCloud();
+      setIsSyncingAll(false);
+  };
+
+  const cleanNum = (val: string) => {
+      if (!val || val === '-' || val === '#ERROR!' || val.trim() === '') return 0;
+      return parseFloat(val.replace(/[^0-9.-]+/g, '')) || 0;
+  };
+
+  const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
+      setImportLoading(true);
+
       const reader = new FileReader();
-      reader.onload = (event) => {
-          try {
-              const data = JSON.parse(event.target?.result as string);
-              if (window.confirm("⚠️ SYSTEM RESTORE: This will overwrite ALL local data. Proceed?")) {
-                  restoreData(data);
-                  alert("✅ Database Restored.");
+      reader.onload = async (event) => {
+          const text = event.target?.result as string;
+          const rows = text.split('\n').filter(r => r.trim()).map(row => {
+              const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+              return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
+          });
+
+          // Skip header if looks like labels
+          const dataRows = (rows[0][0].toLowerCase().includes('date') || rows[0][1].toLowerCase().includes('acc')) ? rows.slice(1) : rows;
+          
+          const newTxs: Transaction[] = [];
+          dataRows.forEach((row, idx) => {
+              // EXPECTED 6 COLS: Date, Acc Name, Acc Type, Debit, Credit, Description
+              if (row.length < 5) return;
+
+              const date = row[0] || new Date().toISOString().split('T')[0];
+              const accName = row[1] || 'Imported Entry';
+              const debit = cleanNum(row[3]);
+              const credit = cleanNum(row[4]);
+              const desc = row[5] || accName;
+
+              if (debit > 0) {
+                  newTxs.push({ id: `imp-dr-${Date.now()}-${idx}`, date, type: 'EXPENSE', category: accName, amount: debit, description: desc, method: 'TRANSFER' });
               }
-          } catch (err) { alert("❌ Corrupt backup file."); }
+              if (credit > 0) {
+                  newTxs.push({ id: `imp-cr-${Date.now()}-${idx}`, date, type: 'INCOME', category: accName, amount: credit, description: desc, method: 'TRANSFER' });
+              }
+          });
+
+          if (window.confirm(`Detected ${newTxs.length} records. Confirm bulk import?`)) {
+              bulkAddTransactions(newTxs);
+              alert(`Successfully imported ${newTxs.length} financial records.`);
+          }
+          setImportLoading(false);
+          e.target.value = '';
       };
       reader.readAsText(file);
   };
 
-  const triggerSync = async () => {
-      if (!isCloudConnected) {
-          alert("❌ Connect to Supabase first.");
-          return;
-      }
-      setIsSyncing(true);
-      await syncAllLocalToCloud();
-      setIsSyncing(false);
-      if (!lastSyncError) alert("✅ Cloud Mirror Successful!");
+  const copySupabaseSql = () => {
+      const sql = `-- AUTO DAZZLE ERP SCHEMA v2.3
+CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, address TEXT, lifetime_value NUMERIC DEFAULT 0, joined_date DATE DEFAULT CURRENT_DATE, visits INTEGER DEFAULT 0, is_premium BOOLEAN DEFAULT FALSE, vehicles JSONB DEFAULT '[]'::jsonb);
+CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC DEFAULT 0, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL, segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC DEFAULT 0, tax NUMERIC DEFAULT 0, notes TEXT, payment_status TEXT);
+CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC DEFAULT 0, method TEXT, description TEXT, reference_id TEXT);
+CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, duration_minutes INTEGER, base_price NUMERIC, prices JSONB);`;
+      navigator.clipboard.writeText(sql);
+      alert("SQL Schema copied!");
   };
 
-  const generateSchemaSql = () => `
--- Auto Dazzle ERP Supabase Schema
--- Run this in your Supabase SQL Editor to enable Cloud Sync
-
-CREATE TABLE IF NOT EXISTS erp_customers (id TEXT PRIMARY KEY, name TEXT, phone TEXT, email TEXT, address TEXT, "lifetimeValue" NUMERIC, "joinedDate" TEXT, "outstandingBalance" NUMERIC, "isPremium" BOOLEAN, vehicles JSONB);
-CREATE TABLE IF NOT EXISTS erp_jobs (id TEXT PRIMARY KEY, "ticketNumber" TEXT, date TEXT, "timeIn" TEXT, "customerId" TEXT, segment TEXT, "serviceIds" TEXT[], "assignedStaffIds" TEXT[], status TEXT, total NUMERIC, "taxEnabled" BOOLEAN, "paymentStatus" TEXT);
-CREATE TABLE IF NOT EXISTS erp_transactions (id TEXT PRIMARY KEY, date TEXT, type TEXT, category TEXT, amount NUMERIC, method TEXT, description TEXT);
-CREATE TABLE IF NOT EXISTS erp_accounts (id TEXT PRIMARY KEY, code TEXT, name TEXT, type TEXT, balance NUMERIC);
-CREATE TABLE IF NOT EXISTS erp_inventory (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, "quantityOnHand" NUMERIC, "reorderPoint" NUMERIC, "costPerUnit" NUMERIC, supplier TEXT);
-CREATE TABLE IF NOT EXISTS erp_staff (id TEXT PRIMARY KEY, name TEXT, role TEXT, email TEXT, phone TEXT, "baseSalary" NUMERIC, active BOOLEAN);
-CREATE TABLE IF NOT EXISTS erp_services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, prices JSONB, category TEXT);
-`.trim();
-
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+    <div className="space-y-6 animate-fade-in-up">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
         <div>
-          <h2 className="text-3xl font-black text-black uppercase tracking-tighter">Command Center</h2>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Kernel v4.2 // Cloud Bridge Active</p>
+            <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">System Control</h2>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Setup & Migration</p>
         </div>
         <div className="flex gap-2">
-             <button onClick={() => setActiveTab('MIGRATION')} className={`px-6 py-3 text-xs font-black uppercase rounded-xl border-4 border-black transition-all ${activeTab === 'MIGRATION' ? 'bg-black text-white' : 'bg-white text-black'}`}>Ledger</button>
-             <button onClick={() => setActiveTab('SYSTEM')} className={`px-6 py-3 text-xs font-black uppercase rounded-xl border-4 border-black transition-all ${activeTab === 'SYSTEM' ? 'bg-black text-white' : 'bg-white text-black'}`}>Cloud & Icon</button>
-             <button onClick={() => setActiveTab('PROFILE')} className={`px-6 py-3 text-xs font-black uppercase rounded-xl border-4 border-black transition-all ${activeTab === 'PROFILE' ? 'bg-black text-white' : 'bg-white text-black'}`}>Access</button>
+             <button onClick={() => setActiveTab('PROFILE')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'PROFILE' ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Security</button>
+             <button onClick={() => setActiveTab('CLOUD')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'CLOUD' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Cloud</button>
+             <button onClick={() => setActiveTab('BACKUP')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'BACKUP' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Backup</button>
+             <button onClick={() => setActiveTab('MIGRATION')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'MIGRATION' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Import</button>
         </div>
       </div>
 
-      {activeTab === 'SYSTEM' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-black">
-            {/* Branding */}
-            <div className="bg-white p-10 rounded-[40px] border-4 border-black shadow-[12px_12px_0px_0px_rgba(245,158,11,1)]">
-                <div className="flex items-center gap-4 mb-8 border-b-4 border-slate-50 pb-6">
-                    <div className="p-4 bg-amber-500 rounded-2xl text-white shadow-lg"><ImageIconLucide size={32}/></div>
-                    <h4 className="text-2xl font-black text-black uppercase tracking-tight">Identity Engine</h4>
+      {activeTab === 'PROFILE' && (
+        <div className="bg-white p-8 rounded-lg border border-slate-200 shadow-sm max-w-2xl mx-auto">
+            <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Lock size={14} className="text-red-600"/> Security Access</h4>
+            <form onSubmit={(e) => { e.preventDefault(); updatePassword('SUPER_ADMIN', passSuper); updatePassword('STAFF', passStaff); alert('Saved!'); }} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Master Admin Passcode</label>
+                        <input type="password" value={passSuper} onChange={e => setPassSuper(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800" />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">Staff Portal Passcode</label>
+                        <input type="password" value={passStaff} onChange={e => setPassStaff(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-800" />
+                    </div>
+                </div>
+                <button type="submit" className="w-full py-3 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-700 shadow-lg transition-all">Update Database Access</button>
+            </form>
+        </div>
+      )}
+
+      {activeTab === 'CLOUD' && (
+         <div className="space-y-6">
+             <div className="bg-slate-900 p-8 rounded-xl border border-slate-700 shadow-2xl">
+                <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Cloud Engine</h4>
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.3em] mb-8">PostgreSQL / Supabase Sync</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+                    <input type="text" value={cloudUrl} onChange={e => setCloudUrl(e.target.value)} placeholder="Supabase URL" className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
+                    <input type="password" value={cloudKey} onChange={e => setCloudKey(e.target.value)} placeholder="Service Role Key" className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
+                </div>
+                <div className="mt-8 flex items-center gap-6">
+                    <button onClick={handleConnect} disabled={isConnecting} className="px-10 py-4 bg-red-600 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-red-700 shadow-xl flex items-center gap-3 disabled:bg-slate-700">
+                        {isConnecting ? <Loader2 className="animate-spin" size={16} /> : <Wifi size={16} />} Establish Link
+                    </button>
+                    <span className="text-[10px] font-black text-white uppercase tracking-widest">Status: {isCloudConnected ? 'CONNECTED' : 'OFFLINE'}</span>
+                </div>
+             </div>
+             {isCloudConnected && (
+                <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-lg flex items-center justify-between">
+                    <div>
+                        <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Push Local modules to Cloud</h4>
+                        <p className="text-xs text-emerald-700 font-medium max-w-md">Update cloud database with all local ledger records.</p>
+                    </div>
+                    <button onClick={handleForceSync} disabled={isSyncingAll} className="px-8 py-3 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 shadow-lg flex items-center gap-2">
+                        {isSyncingAll ? <Loader2 className="animate-spin" size={14}/> : <RefreshCcw size={14}/>} Sync Modules Now
+                    </button>
+                </div>
+             )}
+             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg"><Code size={24} /></div>
+                    <h4 className="font-black text-slate-800 uppercase text-[10px] tracking-widest">SQL Schema v2.3</h4>
+                </div>
+                <button onClick={copySupabaseSql} className="px-6 py-2 bg-slate-100 text-slate-700 rounded-md text-[10px] font-black uppercase hover:bg-slate-200 flex items-center gap-2"><Copy size={12} /> Copy SQL</button>
+             </div>
+         </div>
+      )}
+
+      {activeTab === 'BACKUP' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6 mx-auto"><FileJson size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Export JSON</h4>
+                <button onClick={handleFullSystemBackup} className="w-full py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-black shadow-lg">Generate Backup</button>
+            </div>
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-6 mx-auto"><RefreshCcw size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Restore System</h4>
+                <label className="w-full">
+                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
+                    <div className="w-full py-4 bg-white border-2 border-slate-900 text-slate-900 rounded-lg font-black uppercase text-xs tracking-widest text-center cursor-pointer hover:bg-slate-50 transition-all">Upload & Restore</div>
+                </label>
+            </div>
+        </div>
+      )}
+
+      {activeTab === 'MIGRATION' && (
+        <div className="space-y-6">
+            <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
+                <div className="flex items-center gap-3 mb-6">
+                    <Landmark className="text-indigo-600" size={28}/>
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Financial Migration</h4>
                 </div>
                 
-                <div className="flex flex-col items-center">
-                    <div className="w-48 h-48 bg-slate-50 border-4 border-dashed border-slate-200 rounded-[32px] mb-6 flex items-center justify-center relative overflow-hidden group">
-                        {logoUrl ? <img src={logoUrl} className="w-full h-full object-contain p-4" /> : <ImageIconLucide size={48} className="text-slate-300"/>}
-                        <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
-                            <label className="cursor-pointer text-white font-black text-xs uppercase tracking-widest text-center px-4">
-                                Click to Upload<br/>(Max 1MB)
-                                <input type="file" accept="image/png, image/jpeg" onChange={handleLogoUpload} className="hidden" />
-                            </label>
-                        </div>
-                    </div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase text-center max-w-xs leading-relaxed">Identity is stored in persistent kernel memory. PNG or JPG only.</p>
+                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm relative group max-w-lg">
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest">Master Ledger Import (STRICT 6 COLS)</h5>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50">
+                        {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
+                        <span className="text-sm font-bold text-indigo-800">Select CSV Ledger</span>
+                        <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
+                    </label>
+                    <p className="text-[9px] text-slate-400 mt-4 font-mono leading-tight bg-slate-50 p-2 rounded text-center">Format: Date, Acc Name, Acc Type, Debit, Credit, Description</p>
                 </div>
             </div>
 
-            {/* Cloud Terminal */}
-            <div className="bg-slate-900 p-10 rounded-[40px] border-4 border-black text-white relative">
-                <div className="flex items-center gap-4 mb-8 border-b-4 border-white/5 pb-6">
-                    <div className={`p-4 rounded-2xl ${isCloudConnected ? 'bg-emerald-500' : 'bg-slate-700'} text-white shadow-lg`}><Cloud size={32}/></div>
-                    <div>
-                        <h4 className="text-2xl font-black uppercase tracking-tight">Cloud Mirror</h4>
-                        <span className="text-[9px] font-black uppercase text-slate-500 tracking-[0.2em]">{isCloudConnected ? 'Uplink Established' : 'Awaiting Connection'}</span>
-                    </div>
-                </div>
-                
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Sparkles size={14} className="text-amber-500"/> AI Analysis</h4>
                 <div className="space-y-4">
-                    <input placeholder="Supabase URL" value={cloudUrl} onChange={e => setCloudUrl(e.target.value)} className="w-full bg-black/50 border-2 border-slate-700 rounded-xl p-3 text-xs text-white focus:border-emerald-500 outline-none" />
-                    <input placeholder="Service Role Key" type="password" value={cloudKey} onChange={e => setCloudKey(e.target.value)} className="w-full bg-black/50 border-2 border-slate-700 rounded-xl p-3 text-xs text-white focus:border-emerald-500 outline-none" />
-                    
-                    <div className="flex gap-2">
-                        <button 
-                            onClick={() => connectToCloud(cloudUrl, cloudKey).then(ok => ok ? alert("✅ Connected") : alert("❌ Failed"))}
-                            className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-[10px] rounded-xl transition-all"
-                        >Establish Link</button>
-                        <button 
-                            onClick={triggerSync}
-                            disabled={!isCloudConnected || isSyncing}
-                            className="flex-1 py-4 bg-indigo-600 disabled:bg-slate-800 hover:bg-indigo-500 text-white font-black uppercase text-[10px] rounded-xl flex items-center justify-center gap-2"
-                        >
-                            {isSyncing ? <Loader2 className="animate-spin" size={14}/> : <RefreshCcw size={14}/>}
-                            Push Local to Cloud
+                    <p className="text-xs text-slate-600 font-medium">Paste legacy data rows here for Gemini AI to map to SQL.</p>
+                    <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Paste data snippets..." className="w-full h-40 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none" />
+                    <div className="flex justify-end">
+                        <button onClick={() => {
+                            if (!inputText.trim()) return;
+                            setLoading(true);
+                            analyzeDataStructure(inputText).then(res => { setResult(res); setLoading(false); }).catch(() => setLoading(false));
+                        }} disabled={loading} className="px-8 py-3 bg-slate-900 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black flex items-center gap-2">
+                            {loading ? <Loader2 className="animate-spin" size={14} /> : <Database size={14} />} Analyze Data
                         </button>
                     </div>
-
-                    {lastSyncError && <div className="p-3 bg-red-900/50 border border-red-500/50 rounded-lg text-[9px] text-red-200 font-bold uppercase"><AlertTriangle size={10} className="inline mr-1"/> {lastSyncError}</div>}
-
-                    <button onClick={() => setShowSql(!showSql)} className="w-full py-2 text-[9px] font-black text-slate-500 uppercase hover:text-white transition-colors border border-slate-800 rounded-lg">View Supabase Prep SQL</button>
-                    
-                    {showSql && (
-                        <div className="mt-4 bg-black rounded-xl p-4 border border-slate-700">
-                             <div className="flex justify-between items-center mb-2">
-                                <span className="text-[9px] font-black text-indigo-400">SQL SCRIPT</span>
-                                <button onClick={() => { navigator.clipboard.writeText(generateSchemaSql()); alert("SQL Copied!"); }} className="text-[9px] bg-slate-800 px-2 py-1 rounded text-white hover:bg-indigo-600">COPY</button>
-                             </div>
-                             <pre className="text-[8px] font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">{generateSchemaSql()}</pre>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Offline Backups */}
-            <div className="bg-white p-10 rounded-[40px] border-4 border-black md:col-span-2 shadow-[12px_12px_0px_0px_rgba(16,185,129,1)]">
-                <div className="flex items-center gap-4 mb-8">
-                    <div className="p-4 bg-emerald-600 rounded-2xl text-white shadow-lg"><Download size={32}/></div>
-                    <h4 className="text-2xl font-black text-black uppercase tracking-tight">Manual State Backups</h4>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <button onClick={handleDownloadBackup} className="flex items-center justify-between p-6 bg-slate-900 text-white rounded-3xl hover:bg-black transition-all group">
-                        <div className="text-left">
-                            <p className="text-xl font-black uppercase">Export Full State</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Download System .JSON</p>
-                        </div>
-                        <Download className="group-hover:translate-y-1 transition-transform" size={32}/>
-                    </button>
-
-                    <label className="flex items-center justify-between p-6 bg-white border-4 border-slate-900 text-slate-900 rounded-3xl hover:bg-slate-50 cursor-pointer transition-all group">
-                        <div className="text-left">
-                            <p className="text-xl font-black uppercase">Restore ERP</p>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Upload .JSON Backup</p>
-                        </div>
-                        <RefreshCcw className="group-hover:rotate-180 transition-transform duration-500" size={32}/>
-                        <input type="file" accept=".json" onChange={handleRestoreBackup} className="hidden" />
-                    </label>
-                </div>
-
-                <div className="mt-8 flex justify-center">
-                    <button onClick={() => { if(window.confirm("WIPE EVERYTHING? This is irreversible.")) resetToFactory(); }} className="px-10 py-3 bg-red-50 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] border-2 border-red-200 hover:bg-red-600 hover:text-white transition-all">Destroy Local Kernel Storage</button>
                 </div>
             </div>
         </div>
