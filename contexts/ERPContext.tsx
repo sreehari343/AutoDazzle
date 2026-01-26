@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { 
   MOCK_ACCOUNTS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_JOB_CARDS, 
@@ -107,6 +107,37 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
 
+  // --- AUTOMATED SYNC ENGINE ---
+  const syncTimeoutRef = useRef<number | null>(null);
+
+  const syncAllLocalToCloud = async () => {
+    if (!supabase || !isCloudConnected) return;
+    setSyncStatus('SYNCING');
+    try {
+      // Parallel upserts to database
+      await Promise.all([
+        supabase.from('customers').upsert(customers.map(c => ({...c, vehicles: JSON.stringify(c.vehicles)}))),
+        supabase.from('staff').upsert(staff),
+        supabase.from('services').upsert(services.map(s => ({...s, prices: JSON.stringify(s.prices)}))),
+        supabase.from('transactions').upsert(transactions),
+        supabase.from('jobs').upsert(jobs.map(j => ({...j, service_ids: j.serviceIds, assigned_staff_ids: j.assignedStaffIds})))
+      ]);
+      setSyncStatus('SYNCED');
+    } catch (err) {
+      console.error("Auto Sync Error:", err);
+      setSyncStatus('ERROR');
+    }
+  };
+
+  useEffect(() => {
+    if (isCloudConnected && supabase) {
+      if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = window.setTimeout(() => {
+        syncAllLocalToCloud();
+      }, 3000); // 3-second debounce for stability
+    }
+  }, [customers, jobs, transactions, staff, inventory, services]);
+
   const updateBalances = (legs: LedgerLeg[]) => {
     setAccounts(prev => {
       let updated = [...prev];
@@ -143,7 +174,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updated = [...transactions, ...txs];
     setTransactions(updated);
     persist('erp_transactions', updated);
-    // Simple bulk balance update logic
     txs.forEach(tx => {
        updateBalances([
           { accountName: tx.category, amount: tx.amount, isDebit: tx.type === 'EXPENSE' },
@@ -186,28 +216,12 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setSupabase(client);
       setIsCloudConnected(true);
       setSyncStatus('SYNCED');
+      localStorage.setItem('supabase_url', url);
+      localStorage.setItem('supabase_key', key);
       return true;
     } catch (err: any) {
       setSyncStatus('ERROR');
       return false;
-    }
-  };
-
-  const syncAllLocalToCloud = async () => {
-    if (!supabase || !isCloudConnected) return;
-    setSyncStatus('SYNCING');
-    try {
-      await supabase.from('customers').upsert(customers);
-      await supabase.from('staff').upsert(staff);
-      await supabase.from('services').upsert(services);
-      await supabase.from('transactions').upsert(transactions);
-      await supabase.from('jobs').upsert(jobs);
-      setSyncStatus('SYNCED');
-      alert("✅ All local modules synced to Cloud successfully!");
-    } catch (err) {
-      console.error("Sync Error:", err);
-      setSyncStatus('ERROR');
-      alert("❌ Cloud Sync Failed. Check Supabase credentials.");
     }
   };
 
