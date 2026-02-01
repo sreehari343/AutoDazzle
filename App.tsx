@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { ViewState, UserRole } from './types.ts';
 import { Financials } from './components/Financials.tsx';
@@ -20,22 +19,19 @@ import {
   Package, 
   ShieldCheck, 
   Menu, 
-  Search,
   Bell,
   ClipboardList,
   ShoppingCart,
   BarChart3,
   Briefcase,
-  ChevronRight,
   LogOut,
   Settings,
   Cloud,
   WifiOff,
   UserCircle,
-  ChevronDown,
   ShieldAlert,
-  Lock,
-  Key
+  Key,
+  RefreshCcw
 } from 'lucide-react';
 
 const LoginPage = () => {
@@ -58,7 +54,7 @@ const LoginPage = () => {
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
         <div className="bg-black p-8 text-center border-b-4 border-red-600">
            <img src={logoUrl} alt="Logo" className="w-20 h-20 mx-auto mb-4 object-contain" />
-           <h1 className="text-3xl font-black text-white tracking-tighter uppercase leading-none" style={{ fontFamily: '"Inter", sans-serif' }}>
+           <h1 className="text-3xl font-black text-white tracking-tighter uppercase leading-none">
               Auto<span className="text-red-600 ml-1">Dazzle</span>
            </h1>
            <p className="text-slate-400 text-xs font-bold uppercase mt-2 tracking-widest">Enterprise Resource Planning</p>
@@ -107,7 +103,7 @@ const LoginPage = () => {
           </button>
           
           <div className="text-center pt-2">
-             <p className="text-[10px] text-slate-400 font-medium">Secured by Auto Dazzle ERP v2.0</p>
+             <p className="text-[10px] text-slate-400 font-medium">Secured by Auto Dazzle ERP v2.2.2</p>
           </div>
         </form>
       </div>
@@ -116,7 +112,7 @@ const LoginPage = () => {
 };
 
 const AppContent = () => {
-  const { isAuthenticated, logout, currentUserRole, logoUrl } = useERP();
+  const { isAuthenticated, logout, currentUserRole, logoUrl, isCloudConnected, syncStatus } = useERP();
   const [view, setView] = useState<ViewState>('DASHBOARD');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
 
@@ -135,6 +131,7 @@ const AppContent = () => {
     >
       <Icon size={18} strokeWidth={2} className={`${view === target ? 'text-white' : 'text-slate-400'} mr-3`} />
       {isSidebarOpen && <span className="font-bold text-xs tracking-wide uppercase">{label}</span>}
+      {target === 'MIGRATION' && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>}
     </button>
   );
 
@@ -146,7 +143,7 @@ const AppContent = () => {
   };
 
   return (
-    <div className="flex h-screen bg-[#F1F5F9] overflow-hidden font-sans text-slate-900 print:block print:h-auto print:overflow-visible print:bg-white">
+    <div className="flex h-screen bg-[#F1F5F9] overflow-hidden font-sans text-slate-900">
       
       <aside 
         className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-black text-white flex flex-col transition-all duration-300 shadow-2xl z-30 print:hidden`}
@@ -155,7 +152,7 @@ const AppContent = () => {
            {isSidebarOpen ? (
               <div className="flex items-center gap-3 w-full">
                   <img src={logoUrl} alt="Logo" className="h-10 w-10 object-contain rounded" />
-                  <h1 className="font-black text-white text-lg tracking-tighter uppercase leading-none" style={{ fontFamily: '"Inter", sans-serif' }}>
+                  <h1 className="font-black text-white text-lg tracking-tighter uppercase leading-none">
                     Auto<br/><span className="text-red-600">Dazzle</span>
                   </h1>
               </div>
@@ -180,7 +177,7 @@ const AppContent = () => {
               {isModuleVisible('REPORTS') && <NavItem target="REPORTS" icon={BarChart3} label="Reports" />}
               {isModuleVisible('HR') && <NavItem target="HR" icon={Briefcase} label="Staff HR" />}
               {isModuleVisible('PURCHASE') && <NavItem target="PURCHASE" icon={ShoppingCart} label="Expenses" />}
-              {isModuleVisible('MIGRATION') && <NavItem target="MIGRATION" icon={Settings} label="System" />}
+              {isModuleVisible('MIGRATION') && <NavItem target="MIGRATION" icon={Cloud} label="Cloud & Backup" />}
             </>
           )}
         </nav>
@@ -193,43 +190,49 @@ const AppContent = () => {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden relative print:block print:overflow-visible print:h-auto print:static">
+      <main className="flex-1 flex flex-col overflow-hidden relative">
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-20 print:hidden">
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="text-slate-500 hover:text-slate-800 transition-colors">
               <Menu size={20} />
             </button>
-            <div className="flex items-center gap-3">
-               <img src={logoUrl} alt="Logo" className="h-10 w-10 object-contain rounded" />
-               <h1 className="font-black text-slate-900 text-xl hidden md:block tracking-tighter uppercase">Auto <span className="text-red-600">Dazzle</span></h1>
-            </div>
+            <h1 className="font-black text-slate-900 text-xl hidden md:block tracking-tighter uppercase">Auto <span className="text-red-600">Dazzle</span></h1>
           </div>
           
-          <div className="flex items-center space-x-6">
-            <div className="hidden md:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-md border border-slate-200">
-               <span className="text-[10px] font-black text-slate-500 uppercase">Status:</span>
-               <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
-               <span className="text-xs font-black text-slate-800 uppercase tracking-tight">Active</span>
-            </div>
+          <div className="flex items-center space-x-4">
+            {isCloudConnected ? (
+               <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full">
+                  <div className={`w-2 h-2 rounded-full bg-emerald-500 ${syncStatus === 'SYNCING' ? 'animate-ping' : 'animate-pulse'}`}></div>
+                  <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-1">
+                      {syncStatus === 'SYNCING' ? <RefreshCcw size={10} className="animate-spin"/> : <Cloud size={10}/>}
+                      {syncStatus === 'SYNCING' ? 'Syncing...' : 'Cloud Safe'}
+                  </span>
+               </div>
+            ) : (
+               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-full">
+                  <div className="w-2 h-2 rounded-full bg-slate-400"></div>
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                      <WifiOff size={10}/> Offline Only
+                  </span>
+               </div>
+            )}
 
-            <div className="flex items-center gap-4">
-               <div className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentUserRole === 'SUPER_ADMIN' ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                     {currentUserRole === 'SUPER_ADMIN' ? <ShieldCheck size={18}/> : <UserCircle size={18}/>}
-                  </div>
-                  <div className="hidden md:block">
-                    <p className="text-[9px] font-black text-slate-400 uppercase leading-none">Access Level</p>
-                    <p className="text-xs font-black text-slate-800 uppercase tracking-tighter leading-none mt-1">
-                      {currentUserRole === 'SUPER_ADMIN' ? 'Master Admin' : 'Staff User'}
-                    </p>
-                  </div>
+            <div className="flex items-center gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg">
+               <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentUserRole === 'SUPER_ADMIN' ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                  {currentUserRole === 'SUPER_ADMIN' ? <ShieldCheck size={18}/> : <UserCircle size={18}/>}
+               </div>
+               <div className="hidden md:block">
+                 <p className="text-[9px] font-black text-slate-400 uppercase leading-none">Access Level</p>
+                 <p className="text-xs font-black text-slate-800 uppercase tracking-tighter leading-none mt-1">
+                   {currentUserRole === 'SUPER_ADMIN' ? 'Master Admin' : 'Staff User'}
+                 </p>
                </div>
             </div>
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-6 bg-[#f1f5f9] print:block print:p-0 print:m-0 print:overflow-visible print:h-auto print:bg-white">
-          <div className="max-w-[1600px] mx-auto animate-fade-in-up print:max-w-none print:w-full print:mx-0">
+        <div className="flex-1 overflow-auto p-6 bg-[#f1f5f9]">
+          <div className="max-w-[1600px] mx-auto animate-fade-in-up">
             {view === 'DASHBOARD' && <DashboardModule />}
             {view === 'SALES' && <SalesModule />}
             {view === 'PURCHASE' && <PurchaseModule />}
