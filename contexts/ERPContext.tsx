@@ -89,6 +89,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     STAFF: localStorage.getItem('pass_staff') || 'staff'
   }));
 
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR'>('OFFLINE');
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
+
   const [logoUrl, setLogoUrl] = useState<string>(() => localStorage.getItem('erp_logo') || DEFAULT_LOGO);
   const [customers, setCustomers] = useState<Customer[]>(() => getInitialData('erp_customers', MOCK_CUSTOMERS));
   const [jobs, setJobs] = useState<JobCard[]>(() => getInitialData('erp_jobs', MOCK_JOB_CARDS));
@@ -115,6 +120,65 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('erp_payroll_history', JSON.stringify(payrollHistory));
     localStorage.setItem('erp_logo', logoUrl);
   }, [customers, jobs, inventory, staff, services, transactions, accounts, purchases, payrollHistory, logoUrl]);
+
+  const connectToCloud = async (url: string, key: string) => {
+    setSyncStatus('SYNCING');
+    try {
+      const client = createClient(url, key);
+      const { data, error } = await client.from('customers').select('count', { count: 'exact', head: true });
+      if (error) throw error;
+      setSupabase(client);
+      setIsCloudConnected(true);
+      setSyncStatus('SYNCED');
+      localStorage.setItem('erp_cloud_url', url);
+      localStorage.setItem('erp_cloud_key', key);
+      return true;
+    } catch (err: any) {
+      console.error("Cloud Connection Failed:", err);
+      setSyncStatus('ERROR');
+      setLastSyncError(err.message);
+      return false;
+    }
+  };
+
+  const cloudUpsert = async (table: string, data: any[]) => {
+    if (!supabase) return;
+    try {
+      setSyncStatus('SYNCING');
+      const { error } = await supabase.from(table).upsert(data);
+      if (error) throw error;
+      setSyncStatus('SYNCED');
+    } catch (err: any) {
+      setSyncStatus('ERROR');
+      setLastSyncError(`Table ${table}: ${err.message}`);
+    }
+  };
+
+  const syncAllLocalToCloud = async () => {
+    if (!supabase) return;
+    setSyncStatus('SYNCING');
+    try {
+      await cloudUpsert('customers', customers);
+      await cloudUpsert('jobs', jobs);
+      await cloudUpsert('inventory', inventory);
+      await cloudUpsert('staff', staff);
+      await cloudUpsert('services', services);
+      await cloudUpsert('transactions', transactions);
+      await cloudUpsert('accounts', accounts);
+      await cloudUpsert('payroll_history', payrollHistory);
+      setSyncStatus('SYNCED');
+    } catch (err) {
+      setSyncStatus('ERROR');
+    }
+  };
+
+  // Auto-sync whenever local data changes (Debounced potentially in future)
+  useEffect(() => {
+    if (isCloudConnected) {
+       const timer = setTimeout(() => syncAllLocalToCloud(), 2000);
+       return () => clearTimeout(timer);
+    }
+  }, [customers, jobs, inventory, staff, services, transactions, accounts, payrollHistory, isCloudConnected]);
 
   const updateBalances = (legs: LedgerLeg[]) => {
     setAccounts(prev => {
@@ -262,11 +326,11 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       currentUserRole, isAuthenticated, login, logout, updatePassword, logoUrl, 
       updateLogo: setLogoUrl,
       customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
-      isCloudConnected: false, syncStatus: 'OFFLINE', lastSyncError: null, connectToCloud: async () => true, syncAllLocalToCloud: async () => {},
+      isCloudConnected, syncStatus, lastSyncError, connectToCloud, syncAllLocalToCloud,
       addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
       addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, 
       addCustomer: (c) => setCustomers(prev => [...prev, c]),
-      updateCustomer: (c) => setCustomers(prev => prev.map(x => x.id === c.id ? c : x)),
+      updateCustomer: (c) => setCustomers(prev => prev.map(x => x.id === c.id ? x : x)),
       addPurchase: (p) => setPurchases(prev => [...prev, p]), 
       addTransaction, bulkAddTransactions, bulkProcessJournal: () => {}, bulkAddPurchases: () => {}, executePayroll
     }}>
