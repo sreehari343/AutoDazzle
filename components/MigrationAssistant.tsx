@@ -1,381 +1,219 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import React, { useState } from 'react';
+import { analyzeDataStructure } from '../services/geminiService.ts';
+import { AIAnalysisResult, Transaction } from '../types.ts';
+import { useERP } from '../contexts/ERPContext.tsx';
 import { 
-  MOCK_ACCOUNTS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_JOB_CARDS, 
-  MOCK_LEADS, MOCK_PURCHASES, MOCK_SERVICES, MOCK_STAFF, MOCK_TRANSACTIONS, MOCK_APPOINTMENTS,
-  LOGO_URL as DEFAULT_LOGO
-} from '../constants.ts';
-import { 
-  Customer, JobCard, InventoryItem, Staff, Service, Transaction, 
-  LedgerAccount, PurchaseOrder, Lead, Appointment, AccountType, StockTransaction, UserRole, PayrollRun
-} from '../types.ts';
+  Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
+  Wifi, ImageIcon, Copy, Sparkles, X, Code, Landmark, AlertCircle, FileSpreadsheet, FileJson
+} from 'lucide-react';
 
-interface LedgerLeg {
-  accountName: string;
-  amount: number;
-  isDebit: boolean;
-  accountType?: AccountType;
-}
-
-interface ERPContextType {
-  currentUserRole: UserRole | null;
-  isAuthenticated: boolean;
-  login: (role: UserRole, password: string) => boolean;
-  logout: () => void;
-  updatePassword: (role: UserRole, newPass: string) => void;
-  logoUrl: string;
-  updateLogo: (url: string) => void;
-  customers: Customer[];
-  jobs: JobCard[];
-  inventory: InventoryItem[];
-  staff: Staff[];
-  services: Service[];
-  transactions: Transaction[];
-  accounts: LedgerAccount[];
-  purchases: PurchaseOrder[];
-  leads: Lead[];
-  appointments: Appointment[];
-  stockLogs: StockTransaction[]; 
-  payrollHistory: PayrollRun[];
-  isCloudConnected: boolean;
-  syncStatus: 'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR';
-  lastSyncError: string | null;
-  connectToCloud: (url: string, key: string) => Promise<boolean>;
-  syncAllLocalToCloud: () => Promise<void>;
-  addJob: (job: JobCard) => void;
-  updateJob: (job: JobCard) => void; 
-  deleteJob: (id: string) => void; 
-  updateJobStatus: (id: string, status: JobCard['status'], paymentMethod?: Transaction['method']) => void;
-  addStaff: (member: Staff) => void;
-  removeStaff: (id: string) => void;
-  updateStaff: (updatedStaff: Staff) => void;
-  addInventoryItem: (item: InventoryItem) => void;
-  deleteInventoryItem: (id: string) => void;
-  recordStockUsage: (itemId: string, quantity: number, notes: string) => void; 
-  bulkAddInventory: (items: InventoryItem[]) => void; 
-  addService: (service: Service) => void;
-  updateService: (service: Service) => void;
-  deleteService: (id: string) => void;
-  bulkAddServices: (newServices: Service[]) => void;
-  addCustomer: (customer: Customer) => void;
-  updateCustomer: (customer: Customer) => void;
-  addPurchase: (purchase: PurchaseOrder) => void;
-  addTransaction: (tx: Transaction) => void;
-  bulkAddTransactions: (txs: Transaction[]) => void;
-  bulkProcessJournal: (journalEntries: { historyTx?: Transaction, legs: LedgerLeg[] }[]) => void;
-  bulkAddPurchases: (pos: PurchaseOrder[]) => void;
-  executePayroll: (month: string, payrollData: any[]) => void;
-  restoreData: (data: any) => void;
-  resetToFactory: () => void;
-}
-
-const ERPContext = createContext<ERPContextType | undefined>(undefined);
-
-const getInitialData = <T,>(key: string, defaultData: T): T => {
-  try {
-    const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
-  } catch (e) { console.error(`Error loading ${key}`, e); }
-  return defaultData;
-};
-
-export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUserRole, setCurrentUserRole] = useState<UserRole | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passwords, setPasswords] = useState<Record<UserRole, string>>({
-    SUPER_ADMIN: localStorage.getItem('pass_super_admin') || 'admin',
-    STAFF: localStorage.getItem('pass_staff') || 'staff'
-  });
-
-  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
-  const [isCloudConnected, setIsCloudConnected] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR'>('OFFLINE');
+export const MigrationAssistant: React.FC = () => {
+  const { 
+    customers, jobs, transactions, staff, inventory, accounts, purchases, services,
+    restoreData, connectToCloud, isCloudConnected, 
+    logoUrl, updateLogo, updatePassword, bulkAddTransactions, syncAllLocalToCloud,
+    payrollHistory
+  } = useERP();
   
-  const [logoUrl, setLogoUrl] = useState<string>(() => localStorage.getItem('erp_logo') || DEFAULT_LOGO);
-  const [customers, setCustomers] = useState<Customer[]>(() => getInitialData('erp_customers', MOCK_CUSTOMERS));
-  const [jobs, setJobs] = useState<JobCard[]>(() => getInitialData('erp_jobs', MOCK_JOB_CARDS));
-  const [inventory, setInventory] = useState<InventoryItem[]>(() => getInitialData('erp_inventory', MOCK_INVENTORY));
-  const [staff, setStaff] = useState<Staff[]>(() => getInitialData('erp_staff', MOCK_STAFF));
-  const [services, setServices] = useState<Service[]>(() => getInitialData('erp_services', MOCK_SERVICES));
-  const [transactions, setTransactions] = useState<Transaction[]>(() => getInitialData('erp_transactions', MOCK_TRANSACTIONS));
-  const [accounts, setAccounts] = useState<LedgerAccount[]>(() => getInitialData('erp_accounts', MOCK_ACCOUNTS)); 
-  const [purchases, setPurchases] = useState<PurchaseOrder[]>(() => getInitialData('erp_purchases', MOCK_PURCHASES));
-  const [leads, setLeads] = useState<Lead[]>(() => getInitialData('erp_leads', MOCK_LEADS));
-  const [appointments, setAppointments] = useState<Appointment[]>(() => getInitialData('erp_appointments', MOCK_APPOINTMENTS));
-  const [stockLogs, setStockLogs] = useState<StockTransaction[]>(() => getInitialData('erp_stock_logs', []));
-  const [payrollHistory, setPayrollHistory] = useState<PayrollRun[]>(() => getInitialData('erp_payroll_history', []));
+  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('MIGRATION');
+  const [inputText, setInputText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<AIAnalysisResult | null>(null);
 
-  const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
+  const [passSuper, setPassSuper] = useState('');
+  const [passStaff, setPassStaff] = useState('');
 
-  const updateBalances = (legs: LedgerLeg[]) => {
-    setAccounts(prev => {
-      let updated = [...prev];
-      legs.forEach(leg => {
-        let acc = updated.find(a => a.name.toLowerCase() === leg.accountName.toLowerCase());
-        
-        if (!acc) {
-          acc = {
-            id: `acc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-            code: (1000 + updated.length).toString(),
-            name: leg.accountName,
-            type: leg.accountType || AccountType.EXPENSE,
-            balance: 0
-          };
-          updated.push(acc);
+  const [cloudUrl, setCloudUrl] = useState(localStorage.getItem('supabase_url') || '');
+  const [cloudKey, setCloudKey] = useState(localStorage.getItem('supabase_key') || '');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+
+  const handleFullSystemBackup = () => {
+    const backupData = {
+      version: '2.2',
+      timestamp: new Date().toISOString(),
+      modules: { customers, jobs, transactions, staff, inventory, services, financials: accounts, payrollHistory, purchases }
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `auto_dazzle_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+  };
+
+  const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (window.confirm("Restore will overwrite current local data. Proceed?")) {
+           restoreData(data);
         }
-
-        const isDebitNature = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
-        if (isDebitNature) {
-          acc.balance += (leg.isDebit ? leg.amount : -leg.amount);
-        } else {
-          acc.balance += (!leg.isDebit ? leg.amount : -leg.amount);
-        }
-      });
-      persist('erp_accounts', updated);
-      return updated;
-    });
-  };
-
-  const addTransaction = (tx: Transaction) => {
-    const newList = [...transactions, tx];
-    setTransactions(newList);
-    persist('erp_transactions', newList);
-    
-    const legs: LedgerLeg[] = [
-      { accountName: tx.category, amount: tx.amount, isDebit: tx.type === 'EXPENSE' },
-      { accountName: 'Cash on Hand', amount: tx.amount, isDebit: tx.type === 'INCOME' }
-    ];
-    updateBalances(legs);
-  };
-
-  const bulkAddTransactions = (txs: Transaction[]) => {
-    const newList = [...transactions, ...txs];
-    setTransactions(newList);
-    persist('erp_transactions', newList);
-    
-    // Simplistic batch balance update
-    txs.forEach(tx => {
-        const legs: LedgerLeg[] = [
-            { accountName: tx.category, amount: tx.amount, isDebit: tx.type === 'EXPENSE' },
-            { accountName: 'Cash on Hand', amount: tx.amount, isDebit: tx.type === 'INCOME' }
-        ];
-        updateBalances(legs);
-    });
-  };
-
-  const bulkProcessJournal = (entries: { historyTx?: Transaction, legs: LedgerLeg[] }[]) => {
-    const newTxs = entries.filter(e => e.historyTx).map(e => e.historyTx!);
-    const updatedHistory = [...transactions, ...newTxs];
-    setTransactions(updatedHistory);
-    persist('erp_transactions', updatedHistory);
-
-    const allLegs = entries.flatMap(e => e.legs);
-    updateBalances(allLegs);
-  };
-
-  const login = (role: UserRole, password: string) => {
-    if (passwords[role] === password) {
-      setCurrentUserRole(role);
-      setIsAuthenticated(true);
-      sessionStorage.setItem('erp_session_role', role);
-      return true;
-    }
-    return false;
-  };
-
-  const logout = () => {
-    setCurrentUserRole(null);
-    setIsAuthenticated(false);
-    sessionStorage.removeItem('erp_session_role');
-  };
-
-  const updatePassword = (role: UserRole, newPass: string) => {
-    setPasswords(prev => ({ ...prev, [role]: newPass }));
-    localStorage.setItem(`pass_${role.toLowerCase()}`, newPass);
-  };
-
-  const connectToCloud = async (url: string, key: string): Promise<boolean> => {
-    try {
-      const client = createClient(url, key);
-      setSupabase(client);
-      setIsCloudConnected(true);
-      setSyncStatus('SYNCED');
-      localStorage.setItem('supabase_url', url);
-      localStorage.setItem('supabase_key', key);
-      return true;
-    } catch (err: any) {
-      setSyncStatus('ERROR');
-      return false;
-    }
-  };
-
-  const addJob = (job: JobCard) => {
-    const updated = [...jobs, job];
-    setJobs(updated);
-    persist('erp_jobs', updated);
-  };
-
-  const updateJob = (job: JobCard) => {
-    const updated = jobs.map(j => j.id === job.id ? job : j);
-    setJobs(updated);
-    persist('erp_jobs', updated);
-  };
-
-  const deleteJob = (id: string) => {
-    const updated = jobs.filter(j => j.id !== id);
-    setJobs(updated);
-    persist('erp_jobs', updated);
-  };
-
-  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod: Transaction['method'] = 'CASH') => {
-    const updatedJobs = jobs.map(j => {
-      if (j.id === id) {
-        if (status === 'INVOICED' && j.status !== 'INVOICED') {
-          addTransaction({
-            id: `tx-sale-${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
-            type: 'INCOME',
-            category: 'Service Revenue',
-            amount: j.total,
-            method: paymentMethod,
-            description: `Invoice ${j.ticketNumber} Payment`
-          });
-        }
-        return { ...j, status };
+      } catch (err) {
+        alert("Invalid backup file.");
       }
-      return j;
-    });
-    setJobs(updatedJobs);
-    persist('erp_jobs', updatedJobs);
+    };
+    reader.readAsText(file);
+    e.target.value = ''; 
   };
 
-  const addStaff = (member: Staff) => {
-    const updated = [...staff, member];
-    setStaff(updated);
-    persist('erp_staff', updated);
+  const cleanNum = (val: string) => {
+      if (!val || val.trim() === '-' || val.trim() === '') return 0;
+      const cleaned = val.replace(/[^0-9.-]+/g, '');
+      return parseFloat(cleaned) || 0;
   };
 
-  const removeStaff = (id: string) => {
-    const updated = staff.filter(s => s.id !== id);
-    setStaff(updated);
-    persist('erp_staff', updated);
-  };
+  const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setImportLoading(true);
 
-  const updateStaff = (updatedStaff: Staff) => {
-    const updated = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
-    setStaff(updated);
-    persist('erp_staff', updated);
-  };
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          const text = event.target?.result as string;
+          const rows = text.split('\n').filter(r => r.trim()).map(row => {
+              const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+              return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
+          });
 
-  const addInventoryItem = (item: InventoryItem) => {
-    const updated = [...inventory, item];
-    setInventory(updated);
-    persist('erp_inventory', updated);
-  };
+          // Filter header row (usually contains words like "Date" or "Account")
+          const dataRows = (rows[0][0]?.toLowerCase().includes('date') || rows[0][1]?.toLowerCase().includes('acc')) ? rows.slice(1) : rows;
+          
+          const newTxs: Transaction[] = [];
+          dataRows.forEach((row, idx) => {
+              // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
+              if (row.length < 5) return;
 
-  const deleteInventoryItem = (id: string) => {
-    const updated = inventory.filter(i => i.id !== id);
-    setInventory(updated);
-    persist('erp_inventory', updated);
-  };
+              const date = row[0] || new Date().toISOString().split('T')[0];
+              const accName = row[1] || 'Imported Account';
+              const debit = cleanNum(row[3]);
+              const credit = cleanNum(row[4]);
+              const desc = row[5] || accName;
 
-  const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
-      setInventory(prev => {
-          const updated = prev.map(i => i.id === itemId ? { ...i, quantityOnHand: Math.max(0, i.quantityOnHand - quantity) } : i);
-          persist('erp_inventory', updated);
-          return updated;
-      });
-  };
+              if (debit > 0) {
+                  newTxs.push({ 
+                      id: `imp-dr-${Date.now()}-${idx}`, 
+                      date, 
+                      type: 'EXPENSE', 
+                      category: accName, 
+                      amount: debit, 
+                      description: desc, 
+                      method: 'TRANSFER' 
+                  });
+              }
+              if (credit > 0) {
+                  newTxs.push({ 
+                      id: `imp-cr-${Date.now()}-${idx}`, 
+                      date, 
+                      type: 'INCOME', 
+                      category: accName, 
+                      amount: credit, 
+                      description: desc, 
+                      method: 'TRANSFER' 
+                  });
+              }
+          });
 
-  const bulkAddInventory = (items: InventoryItem[]) => {
-      setInventory(prev => {
-          const updated = [...prev, ...items];
-          persist('erp_inventory', updated);
-          return updated;
-      });
-  };
-
-  const addService = (service: Service) => {
-    const updated = [...services, service];
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const updateService = (service: Service) => {
-    const updated = services.map(s => s.id === service.id ? service : s);
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const deleteService = (id: string) => {
-    const updated = services.filter(s => s.id !== id);
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const bulkAddServices = (newServices: Service[]) => {
-    const updated = [...services, ...newServices];
-    setServices(updated);
-    persist('erp_services', updated);
-  };
-
-  const executePayroll = (month: string, payrollData: any[]) => {
-    const total = payrollData.reduce((sum, p) => sum + p.netPay, 0);
-    addTransaction({
-      id: `tx-pay-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
-      type: 'EXPENSE',
-      category: 'Labor Expense',
-      amount: total,
-      method: 'TRANSFER',
-      description: `Payroll ${month}`
-    });
-    setPayrollHistory(prev => {
-      const snap = { id: `pr-${Date.now()}`, month, dateGenerated: new Date().toISOString(), totalAmount: total, records: payrollData, status: 'FINALIZED' as const };
-      const updated = [...prev, snap];
-      persist('erp_payroll_history', updated);
-      return updated;
-    });
-  };
-
-  const restoreData = (data: any) => {
-    if (data.modules) {
-      setCustomers(data.modules.customers || []);
-      setJobs(data.modules.jobs || []);
-      setStaff(data.modules.staff || []);
-      setTransactions(data.modules.transactions || []);
-      setInventory(data.modules.inventory || []);
-      setServices(data.modules.services || []);
-      setAccounts(data.modules.financials || MOCK_ACCOUNTS);
-      setPayrollHistory(data.modules.payrollHistory || []);
-    }
-  };
-
-  const resetToFactory = () => {
-    localStorage.clear();
-    window.location.reload();
+          if (newTxs.length > 0 && window.confirm(`Import ${newTxs.length} financial entries?`)) {
+              bulkAddTransactions(newTxs);
+              alert(`Successfully imported ${newTxs.length} records.`);
+          } else if (newTxs.length === 0) {
+              alert("No valid data found in those 6 columns.");
+          }
+          setImportLoading(false);
+          e.target.value = '';
+      };
+      reader.readAsText(file);
   };
 
   return (
-    <ERPContext.Provider value={{
-      currentUserRole, isAuthenticated, login, logout, updatePassword, logoUrl, 
-      updateLogo: (u) => { setLogoUrl(u); localStorage.setItem('erp_logo', u); },
-      customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
-      isCloudConnected, syncStatus, lastSyncError: null, connectToCloud, syncAllLocalToCloud: async () => {},
-      addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
-      addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, 
-      addCustomer: (c) => { const u = [...customers, c]; setCustomers(u); persist('erp_customers', u); },
-      updateCustomer: (c) => { const u = customers.map(x => x.id === c.id ? c : x); setCustomers(u); persist('erp_customers', u); },
-      addPurchase: (p) => { const u = [...purchases, p]; setPurchases(u); persist('erp_purchases', u); }, 
-      addTransaction, bulkAddTransactions, bulkProcessJournal, bulkAddPurchases: (p) => {}, executePayroll
-    }}>
-      {children}
-    </ERPContext.Provider>
-  );
-};
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <div>
+            <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">System Control</h2>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Setup & Migration</p>
+        </div>
+        <div className="flex gap-2">
+             <button onClick={() => setActiveTab('PROFILE')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'PROFILE' ? 'bg-red-600 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Security</button>
+             <button onClick={() => setActiveTab('BACKUP')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'BACKUP' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Backup</button>
+             <button onClick={() => setActiveTab('MIGRATION')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'MIGRATION' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Import</button>
+        </div>
+      </div>
 
-export const useERP = () => {
-  const context = useContext(ERPContext);
-  if (context === undefined) throw new Error('useERP must be used within an ERPProvider');
-  return context;
+      {activeTab === 'MIGRATION' && (
+        <div className="space-y-6 animate-fade-in-up">
+            <div className="bg-indigo-50 border border-indigo-200 p-8 rounded-lg">
+                <div className="flex items-center gap-3 mb-6">
+                    <Landmark className="text-indigo-600" size={28}/>
+                    <h4 className="text-xl font-black text-indigo-900 uppercase tracking-tight">Master Ledger Importer</h4>
+                </div>
+                
+                <div className="bg-white p-6 rounded-lg border border-indigo-100 shadow-sm max-w-lg">
+                    <h5 className="text-[10px] font-black text-indigo-500 uppercase mb-4 tracking-widest flex items-center gap-2"><AlertCircle size={12}/> 6-Column CSV/Excel Only</h5>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-indigo-200 rounded-xl p-10 hover:border-indigo-500 cursor-pointer transition-all bg-indigo-50/50 group">
+                        {importLoading ? <Loader2 className="animate-spin text-indigo-600" /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-3" size={32}/>}
+                        <span className="text-sm font-bold text-indigo-800">Select Financial File</span>
+                        <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
+                    </label>
+                    <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
+                        <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Strict Sequence:</p>
+                        <p className="text-[9px] font-mono text-slate-600 leading-tight uppercase">Date, Acc Name, Acc Type, Debit, Credit, Description</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+                <h4 className="font-black text-slate-800 uppercase text-[10px] mb-6 flex items-center gap-2 tracking-widest"><Sparkles size={14} className="text-amber-500"/> AI Schema Generator</h4>
+                <div className="space-y-4">
+                    <p className="text-xs text-slate-600 font-medium">Paste custom legacy data below for Gemini AI to propose a SQL mapping.</p>
+                    <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Paste rows here..." className="w-full h-40 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-500/20" />
+                    <div className="flex justify-end">
+                        <button onClick={() => {
+                            if (!inputText.trim()) return;
+                            setLoading(true);
+                            analyzeDataStructure(inputText).then(res => { setResult(res); setLoading(false); }).catch(() => setLoading(false));
+                        }} disabled={loading} className="px-8 py-3 bg-slate-900 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black flex items-center gap-2">
+                            {loading ? <Loader2 className="animate-spin" size={14} /> : <Database size={14} />} Analyze
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {result && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800 shadow-xl overflow-hidden">
+                        <h5 className="text-amber-500 font-black text-[10px] uppercase mb-4 tracking-widest">Proposed Schema</h5>
+                        <pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap overflow-y-auto max-h-60">{result.proposedSchema}</pre>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                         <h5 className="text-slate-800 font-black text-[10px] uppercase mb-4 tracking-widest">Migration Steps</h5>
+                         <div className="text-xs text-slate-600 whitespace-pre-wrap overflow-y-auto">{result.migrationPlan}</div>
+                    </div>
+                </div>
+            )}
+        </div>
+      )}
+
+      {activeTab === 'BACKUP' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fade-in-up">
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-6 mx-auto"><FileJson size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Export Ledger</h4>
+                <button onClick={handleFullSystemBackup} className="w-full py-4 bg-slate-900 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-black shadow-lg">Generate Backup</button>
+            </div>
+            <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-6 mx-auto"><RefreshCcw size={32} /></div>
+                <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">Restore System</h4>
+                <label className="w-full">
+                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
+                    <div className="w-full py-4 bg-white border-2 border-slate-900 text-slate-900 rounded-lg font-black uppercase text-xs tracking-widest text-center cursor-pointer hover:bg-slate-50 transition-all">Upload & Restore</div>
+                </label>
+            </div>
+        </div>
+      )}
+    </div>
+  );
 };
