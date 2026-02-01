@@ -1,315 +1,381 @@
-import React, { useState } from 'react';
-import { analyzeDataStructure } from '../services/geminiService.ts';
-import { AIAnalysisResult, Transaction } from '../types.ts';
-import { useERP } from '../contexts/ERPContext.tsx';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { 
-  Upload, Database, Loader2, Lock, RefreshCcw, Cloud, 
-  Wifi, ImageIcon, Copy, Sparkles, X, Code, HardDriveUpload, 
-  FileSpreadsheet, FileJson, Landmark, AlertCircle
-} from 'lucide-react';
+  MOCK_ACCOUNTS, MOCK_CUSTOMERS, MOCK_INVENTORY, MOCK_JOB_CARDS, 
+  MOCK_LEADS, MOCK_PURCHASES, MOCK_SERVICES, MOCK_STAFF, MOCK_TRANSACTIONS, MOCK_APPOINTMENTS,
+  LOGO_URL as DEFAULT_LOGO
+} from '../constants.ts';
+import { 
+  Customer, JobCard, InventoryItem, Staff, Service, Transaction, 
+  LedgerAccount, PurchaseOrder, Lead, Appointment, AccountType, StockTransaction, UserRole, PayrollRun
+} from '../types.ts';
 
-export const MigrationAssistant: React.FC = () => {
-  const { 
-    customers, jobs, transactions, staff, inventory, accounts, purchases, services,
-    restoreData, connectToCloud, isCloudConnected, syncStatus,
-    logoUrl, updateLogo, updatePassword, bulkAddTransactions, syncAllLocalToCloud,
-    payrollHistory
-  } = useERP();
+interface LedgerLeg {
+  accountName: string;
+  amount: number;
+  isDebit: boolean;
+  accountType?: AccountType;
+}
+
+interface ERPContextType {
+  currentUserRole: UserRole | null;
+  isAuthenticated: boolean;
+  login: (role: UserRole, password: string) => boolean;
+  logout: () => void;
+  updatePassword: (role: UserRole, newPass: string) => void;
+  logoUrl: string;
+  updateLogo: (url: string) => void;
+  customers: Customer[];
+  jobs: JobCard[];
+  inventory: InventoryItem[];
+  staff: Staff[];
+  services: Service[];
+  transactions: Transaction[];
+  accounts: LedgerAccount[];
+  purchases: PurchaseOrder[];
+  leads: Lead[];
+  appointments: Appointment[];
+  stockLogs: StockTransaction[]; 
+  payrollHistory: PayrollRun[];
+  isCloudConnected: boolean;
+  syncStatus: 'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR';
+  lastSyncError: string | null;
+  connectToCloud: (url: string, key: string) => Promise<boolean>;
+  syncAllLocalToCloud: () => Promise<void>;
+  addJob: (job: JobCard) => void;
+  updateJob: (job: JobCard) => void; 
+  deleteJob: (id: string) => void; 
+  updateJobStatus: (id: string, status: JobCard['status'], paymentMethod?: Transaction['method']) => void;
+  addStaff: (member: Staff) => void;
+  removeStaff: (id: string) => void;
+  updateStaff: (updatedStaff: Staff) => void;
+  addInventoryItem: (item: InventoryItem) => void;
+  deleteInventoryItem: (id: string) => void;
+  recordStockUsage: (itemId: string, quantity: number, notes: string) => void; 
+  bulkAddInventory: (items: InventoryItem[]) => void; 
+  addService: (service: Service) => void;
+  updateService: (service: Service) => void;
+  deleteService: (id: string) => void;
+  bulkAddServices: (newServices: Service[]) => void;
+  addCustomer: (customer: Customer) => void;
+  updateCustomer: (customer: Customer) => void;
+  addPurchase: (purchase: PurchaseOrder) => void;
+  addTransaction: (tx: Transaction) => void;
+  bulkAddTransactions: (txs: Transaction[]) => void;
+  bulkProcessJournal: (journalEntries: { historyTx?: Transaction, legs: LedgerLeg[] }[]) => void;
+  bulkAddPurchases: (pos: PurchaseOrder[]) => void;
+  executePayroll: (month: string, payrollData: any[]) => void;
+  restoreData: (data: any) => void;
+  resetToFactory: () => void;
+}
+
+const ERPContext = createContext<ERPContextType | undefined>(undefined);
+
+const getInitialData = <T,>(key: string, defaultData: T): T => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) return JSON.parse(saved);
+  } catch (e) { console.error(`Error loading ${key}`, e); }
+  return defaultData;
+};
+
+export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwords, setPasswords] = useState<Record<UserRole, string>>({
+    SUPER_ADMIN: localStorage.getItem('pass_super_admin') || 'admin',
+    STAFF: localStorage.getItem('pass_staff') || 'staff'
+  });
+
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'SYNCED' | 'SYNCING' | 'OFFLINE' | 'ERROR'>('OFFLINE');
   
-  const [activeTab, setActiveTab] = useState<'BACKUP' | 'CLOUD' | 'MIGRATION' | 'PROFILE'>('MIGRATION');
-  const [inputText, setInputText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AIAnalysisResult | null>(null);
+  const [logoUrl, setLogoUrl] = useState<string>(() => localStorage.getItem('erp_logo') || DEFAULT_LOGO);
+  const [customers, setCustomers] = useState<Customer[]>(() => getInitialData('erp_customers', MOCK_CUSTOMERS));
+  const [jobs, setJobs] = useState<JobCard[]>(() => getInitialData('erp_jobs', MOCK_JOB_CARDS));
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => getInitialData('erp_inventory', MOCK_INVENTORY));
+  const [staff, setStaff] = useState<Staff[]>(() => getInitialData('erp_staff', MOCK_STAFF));
+  const [services, setServices] = useState<Service[]>(() => getInitialData('erp_services', MOCK_SERVICES));
+  const [transactions, setTransactions] = useState<Transaction[]>(() => getInitialData('erp_transactions', MOCK_TRANSACTIONS));
+  const [accounts, setAccounts] = useState<LedgerAccount[]>(() => getInitialData('erp_accounts', MOCK_ACCOUNTS)); 
+  const [purchases, setPurchases] = useState<PurchaseOrder[]>(() => getInitialData('erp_purchases', MOCK_PURCHASES));
+  const [leads, setLeads] = useState<Lead[]>(() => getInitialData('erp_leads', MOCK_LEADS));
+  const [appointments, setAppointments] = useState<Appointment[]>(() => getInitialData('erp_appointments', MOCK_APPOINTMENTS));
+  const [stockLogs, setStockLogs] = useState<StockTransaction[]>(() => getInitialData('erp_stock_logs', []));
+  const [payrollHistory, setPayrollHistory] = useState<PayrollRun[]>(() => getInitialData('erp_payroll_history', []));
 
-  const [passSuper, setPassSuper] = useState('');
-  const [passStaff, setPassStaff] = useState('');
+  const persist = (key: string, data: any) => { localStorage.setItem(key, JSON.stringify(data)); };
 
-  const [cloudUrl, setCloudUrl] = useState(localStorage.getItem('supabase_url') || '');
-  const [cloudKey, setCloudKey] = useState(localStorage.getItem('supabase_key') || '');
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [importLoading, setImportLoading] = useState(false);
-
-  const handleFullSystemBackup = () => {
-    const backupData = {
-      version: '2.4',
-      timestamp: new Date().toISOString(),
-      modules: { customers, jobs, transactions, staff, inventory, services, financials: accounts, payrollHistory, purchases }
-    };
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `auto_dazzle_full_erp_${new Date().toISOString().split('T')[0]}.json`;
-    link.click();
-  };
-
-  const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = JSON.parse(event.target?.result as string);
-        if (window.confirm("Restore will overwrite current local data. Proceed?")) {
-           restoreData(data);
+  const updateBalances = (legs: LedgerLeg[]) => {
+    setAccounts(prev => {
+      let updated = [...prev];
+      legs.forEach(leg => {
+        let acc = updated.find(a => a.name.toLowerCase() === leg.accountName.toLowerCase());
+        
+        if (!acc) {
+          acc = {
+            id: `acc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            code: (1000 + updated.length).toString(),
+            name: leg.accountName,
+            type: leg.accountType || AccountType.EXPENSE,
+            balance: 0
+          };
+          updated.push(acc);
         }
-      } catch (err) {
-        alert("Invalid backup file.");
+
+        const isDebitNature = acc.type === AccountType.ASSET || acc.type === AccountType.EXPENSE;
+        if (isDebitNature) {
+          acc.balance += (leg.isDebit ? leg.amount : -leg.amount);
+        } else {
+          acc.balance += (!leg.isDebit ? leg.amount : -leg.amount);
+        }
+      });
+      persist('erp_accounts', updated);
+      return updated;
+    });
+  };
+
+  const addTransaction = (tx: Transaction) => {
+    const newList = [...transactions, tx];
+    setTransactions(newList);
+    persist('erp_transactions', newList);
+    
+    const legs: LedgerLeg[] = [
+      { accountName: tx.category, amount: tx.amount, isDebit: tx.type === 'EXPENSE' },
+      { accountName: 'Cash on Hand', amount: tx.amount, isDebit: tx.type === 'INCOME' }
+    ];
+    updateBalances(legs);
+  };
+
+  const bulkAddTransactions = (txs: Transaction[]) => {
+    const newList = [...transactions, ...txs];
+    setTransactions(newList);
+    persist('erp_transactions', newList);
+    
+    // Simplistic batch balance update
+    txs.forEach(tx => {
+        const legs: LedgerLeg[] = [
+            { accountName: tx.category, amount: tx.amount, isDebit: tx.type === 'EXPENSE' },
+            { accountName: 'Cash on Hand', amount: tx.amount, isDebit: tx.type === 'INCOME' }
+        ];
+        updateBalances(legs);
+    });
+  };
+
+  const bulkProcessJournal = (entries: { historyTx?: Transaction, legs: LedgerLeg[] }[]) => {
+    const newTxs = entries.filter(e => e.historyTx).map(e => e.historyTx!);
+    const updatedHistory = [...transactions, ...newTxs];
+    setTransactions(updatedHistory);
+    persist('erp_transactions', updatedHistory);
+
+    const allLegs = entries.flatMap(e => e.legs);
+    updateBalances(allLegs);
+  };
+
+  const login = (role: UserRole, password: string) => {
+    if (passwords[role] === password) {
+      setCurrentUserRole(role);
+      setIsAuthenticated(true);
+      sessionStorage.setItem('erp_session_role', role);
+      return true;
+    }
+    return false;
+  };
+
+  const logout = () => {
+    setCurrentUserRole(null);
+    setIsAuthenticated(false);
+    sessionStorage.removeItem('erp_session_role');
+  };
+
+  const updatePassword = (role: UserRole, newPass: string) => {
+    setPasswords(prev => ({ ...prev, [role]: newPass }));
+    localStorage.setItem(`pass_${role.toLowerCase()}`, newPass);
+  };
+
+  const connectToCloud = async (url: string, key: string): Promise<boolean> => {
+    try {
+      const client = createClient(url, key);
+      setSupabase(client);
+      setIsCloudConnected(true);
+      setSyncStatus('SYNCED');
+      localStorage.setItem('supabase_url', url);
+      localStorage.setItem('supabase_key', key);
+      return true;
+    } catch (err: any) {
+      setSyncStatus('ERROR');
+      return false;
+    }
+  };
+
+  const addJob = (job: JobCard) => {
+    const updated = [...jobs, job];
+    setJobs(updated);
+    persist('erp_jobs', updated);
+  };
+
+  const updateJob = (job: JobCard) => {
+    const updated = jobs.map(j => j.id === job.id ? job : j);
+    setJobs(updated);
+    persist('erp_jobs', updated);
+  };
+
+  const deleteJob = (id: string) => {
+    const updated = jobs.filter(j => j.id !== id);
+    setJobs(updated);
+    persist('erp_jobs', updated);
+  };
+
+  const updateJobStatus = (id: string, status: JobCard['status'], paymentMethod: Transaction['method'] = 'CASH') => {
+    const updatedJobs = jobs.map(j => {
+      if (j.id === id) {
+        if (status === 'INVOICED' && j.status !== 'INVOICED') {
+          addTransaction({
+            id: `tx-sale-${Date.now()}`,
+            date: new Date().toISOString().split('T')[0],
+            type: 'INCOME',
+            category: 'Service Revenue',
+            amount: j.total,
+            method: paymentMethod,
+            description: `Invoice ${j.ticketNumber} Payment`
+          });
+        }
+        return { ...j, status };
       }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; 
+      return j;
+    });
+    setJobs(updatedJobs);
+    persist('erp_jobs', updatedJobs);
   };
 
-  const handleConnect = async () => {
-      setIsConnecting(true);
-      const success = await connectToCloud(cloudUrl, cloudKey);
-      setIsConnecting(false);
-      if (success) alert("Connected to Supabase! Automatic synchronization is now ACTIVE.");
+  const addStaff = (member: Staff) => {
+    const updated = [...staff, member];
+    setStaff(updated);
+    persist('erp_staff', updated);
   };
 
-  const cleanNum = (val: string) => {
-      if (!val || val === '-' || val === '#ERROR!' || val.trim() === '') return 0;
-      return parseFloat(val.replace(/[^0-9.-]+/g, '')) || 0;
+  const removeStaff = (id: string) => {
+    const updated = staff.filter(s => s.id !== id);
+    setStaff(updated);
+    persist('erp_staff', updated);
   };
 
-  const handleMasterImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      setImportLoading(true);
-
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-          const text = event.target?.result as string;
-          const rows = text.split('\n').filter(r => r.trim()).map(row => {
-              const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-              return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
-          });
-
-          const dataRows = (rows[0][0].toLowerCase().includes('date') || rows[0][1].toLowerCase().includes('acc')) ? rows.slice(1) : rows;
-          
-          const newTxs: Transaction[] = [];
-          dataRows.forEach((row, idx) => {
-              // STRICT 6 COLS: Date, Acc Name, Acc Type, Debit, Credit, Description
-              if (row.length < 5) return;
-
-              const date = row[0] || new Date().toISOString().split('T')[0];
-              const accName = row[1] || 'Imported Account';
-              const debit = cleanNum(row[3]);
-              const credit = cleanNum(row[4]);
-              const desc = row[5] || accName;
-
-              if (debit > 0) {
-                  newTxs.push({ id: `imp-dr-${Date.now()}-${idx}`, date, type: 'EXPENSE', category: accName, amount: debit, description: desc, method: 'TRANSFER' });
-              }
-              if (credit > 0) {
-                  newTxs.push({ id: `imp-cr-${Date.now()}-${idx}`, date, type: 'INCOME', category: accName, amount: credit, description: desc, method: 'TRANSFER' });
-              }
-          });
-
-          if (newTxs.length === 0) {
-              alert("No valid numerical data found in Debit/Credit columns.");
-          } else if (window.confirm(`Detected ${newTxs.length} valid entries. Import to Ledger now?`)) {
-              bulkAddTransactions(newTxs);
-              alert(`Success! ${newTxs.length} records pushed to local storage. ${isCloudConnected ? 'Cloud Syncing in progress...' : ''}`);
-          }
-          setImportLoading(false);
-          e.target.value = '';
-      };
-      reader.readAsText(file);
+  const updateStaff = (updatedStaff: Staff) => {
+    const updated = staff.map(s => s.id === updatedStaff.id ? updatedStaff : s);
+    setStaff(updated);
+    persist('erp_staff', updated);
   };
 
-  const copySupabaseSql = () => {
-      const sql = `-- AUTO DAZZLE ERP SCHEMA v2.4
-CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, address TEXT, lifetime_value NUMERIC DEFAULT 0, joined_date DATE DEFAULT CURRENT_DATE, visits INTEGER DEFAULT 0, is_premium BOOLEAN DEFAULT FALSE, vehicles JSONB DEFAULT '[]'::jsonb);
-CREATE TABLE IF NOT EXISTS staff (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT, email TEXT, phone TEXT, base_salary NUMERIC DEFAULT 0, active BOOLEAN DEFAULT TRUE, joined_date DATE DEFAULT CURRENT_DATE, current_advance NUMERIC DEFAULT 0, loan_balance NUMERIC DEFAULT 0);
-CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, ticket_number TEXT NOT NULL, date DATE DEFAULT CURRENT_DATE, time_in TEXT, customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL, segment TEXT, service_ids TEXT[], assigned_staff_ids TEXT[], status TEXT, total NUMERIC DEFAULT 0, tax NUMERIC DEFAULT 0, notes TEXT, payment_status TEXT);
-CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, type TEXT, category TEXT, amount NUMERIC DEFAULT 0, method TEXT, description TEXT, reference_id TEXT);
-CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY, sku TEXT, name TEXT, category TEXT, duration_minutes INTEGER, base_price NUMERIC, prices JSONB);`;
-      navigator.clipboard.writeText(sql);
-      alert("SQL Schema copied!");
+  const addInventoryItem = (item: InventoryItem) => {
+    const updated = [...inventory, item];
+    setInventory(updated);
+    persist('erp_inventory', updated);
+  };
+
+  const deleteInventoryItem = (id: string) => {
+    const updated = inventory.filter(i => i.id !== id);
+    setInventory(updated);
+    persist('erp_inventory', updated);
+  };
+
+  const recordStockUsage = (itemId: string, quantity: number, notes: string) => {
+      setInventory(prev => {
+          const updated = prev.map(i => i.id === itemId ? { ...i, quantityOnHand: Math.max(0, i.quantityOnHand - quantity) } : i);
+          persist('erp_inventory', updated);
+          return updated;
+      });
+  };
+
+  const bulkAddInventory = (items: InventoryItem[]) => {
+      setInventory(prev => {
+          const updated = [...prev, ...items];
+          persist('erp_inventory', updated);
+          return updated;
+      });
+  };
+
+  const addService = (service: Service) => {
+    const updated = [...services, service];
+    setServices(updated);
+    persist('erp_services', updated);
+  };
+
+  const updateService = (service: Service) => {
+    const updated = services.map(s => s.id === service.id ? service : s);
+    setServices(updated);
+    persist('erp_services', updated);
+  };
+
+  const deleteService = (id: string) => {
+    const updated = services.filter(s => s.id !== id);
+    setServices(updated);
+    persist('erp_services', updated);
+  };
+
+  const bulkAddServices = (newServices: Service[]) => {
+    const updated = [...services, ...newServices];
+    setServices(updated);
+    persist('erp_services', updated);
+  };
+
+  const executePayroll = (month: string, payrollData: any[]) => {
+    const total = payrollData.reduce((sum, p) => sum + p.netPay, 0);
+    addTransaction({
+      id: `tx-pay-${Date.now()}`,
+      date: new Date().toISOString().split('T')[0],
+      type: 'EXPENSE',
+      category: 'Labor Expense',
+      amount: total,
+      method: 'TRANSFER',
+      description: `Payroll ${month}`
+    });
+    setPayrollHistory(prev => {
+      const snap = { id: `pr-${Date.now()}`, month, dateGenerated: new Date().toISOString(), totalAmount: total, records: payrollData, status: 'FINALIZED' as const };
+      const updated = [...prev, snap];
+      persist('erp_payroll_history', updated);
+      return updated;
+    });
+  };
+
+  const restoreData = (data: any) => {
+    if (data.modules) {
+      setCustomers(data.modules.customers || []);
+      setJobs(data.modules.jobs || []);
+      setStaff(data.modules.staff || []);
+      setTransactions(data.modules.transactions || []);
+      setInventory(data.modules.inventory || []);
+      setServices(data.modules.services || []);
+      setAccounts(data.modules.financials || MOCK_ACCOUNTS);
+      setPayrollHistory(data.modules.payrollHistory || []);
+    }
+  };
+
+  const resetToFactory = () => {
+    localStorage.clear();
+    window.location.reload();
   };
 
   return (
-    <div className="space-y-6 animate-fade-in-up">
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-        <div>
-            <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">System Infrastructure</h2>
-            <div className="flex items-center gap-2 mt-1">
-                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Connection:</span>
-                <span className={`text-[10px] font-black uppercase flex items-center gap-1 ${isCloudConnected ? 'text-green-600' : 'text-slate-400'}`}>
-                    {isCloudConnected ? <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"/> : null}
-                    {isCloudConnected ? 'Stable' : 'Local Only'}
-                </span>
-            </div>
-        </div>
-        <div className="flex gap-2">
-             <button onClick={() => setActiveTab('MIGRATION')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'MIGRATION' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Import</button>
-             <button onClick={() => setActiveTab('CLOUD')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'CLOUD' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Cloud</button>
-             <button onClick={() => setActiveTab('BACKUP')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'BACKUP' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Backup</button>
-             <button onClick={() => setActiveTab('PROFILE')} className={`px-4 py-2 text-[10px] font-black uppercase rounded-md transition-all ${activeTab === 'PROFILE' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300'}`}>Admin</button>
-        </div>
-      </div>
-
-      {activeTab === 'CLOUD' && (
-         <div className="space-y-6">
-             <div className="bg-slate-900 p-8 rounded-xl border border-slate-700 shadow-2xl">
-                <h4 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">Cloud Database Configuration</h4>
-                <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.3em] mb-8">PostgreSQL / Supabase Real-Time Engine</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Supabase Endpoint URL</label>
-                        <input type="text" value={cloudUrl} onChange={e => setCloudUrl(e.target.value)} placeholder="https://your-project.supabase.co" className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
-                    </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Service Role API Key</label>
-                        <input type="password" value={cloudKey} onChange={e => setCloudKey(e.target.value)} placeholder="eyJh..." className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-sm font-mono text-white outline-none focus:border-red-600/50" />
-                    </div>
-                </div>
-                <div className="mt-8 flex items-center gap-6">
-                    <button onClick={handleConnect} disabled={isConnecting} className="px-10 py-4 bg-red-600 text-white rounded-lg font-black uppercase text-xs tracking-widest hover:bg-red-700 shadow-xl flex items-center gap-3 disabled:bg-slate-700">
-                        {isConnecting ? <Loader2 className="animate-spin" size={16} /> : <Wifi size={16} />} Establish Connection
-                    </button>
-                    <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-white uppercase tracking-widest">Auto-Sync Status:</span>
-                        <span className={`text-[10px] font-black uppercase ${isCloudConnected ? 'text-emerald-400' : 'text-slate-500'}`}>
-                            {isCloudConnected ? 'Operational (Real-time Pushes Active)' : 'Inactive'}
-                        </span>
-                    </div>
-                </div>
-             </div>
-             {isCloudConnected && (
-                <div className="bg-emerald-50 border-2 border-emerald-200 p-6 rounded-lg flex items-center justify-between shadow-sm">
-                    <div className="flex items-center gap-4">
-                        <div className="p-3 bg-emerald-100 text-emerald-600 rounded-full animate-pulse"><RefreshCcw size={20}/></div>
-                        <div>
-                            <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-widest">Real-Time Syncing</h4>
-                            <p className="text-xs text-emerald-700 font-medium">System is automatically pushing all local ledger changes to your cloud database.</p>
-                        </div>
-                    </div>
-                    {syncStatus === 'SYNCING' && <span className="text-[9px] font-black uppercase bg-emerald-200 text-emerald-800 px-3 py-1 rounded">Pushing Data...</span>}
-                </div>
-             )}
-             <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg"><Code size={24} /></div>
-                    <h4 className="font-black text-slate-800 uppercase text-[10px] tracking-widest">PostgreSQL Schema v2.4</h4>
-                </div>
-                <button onClick={copySupabaseSql} className="px-6 py-2 bg-slate-100 text-slate-700 rounded-md text-[10px] font-black uppercase hover:bg-slate-200 flex items-center gap-2 transition-all"><Copy size={12} /> Copy SQL Statements</button>
-             </div>
-         </div>
-      )}
-
-      {activeTab === 'MIGRATION' && (
-        <div className="space-y-6">
-            <div className="bg-indigo-50 border-2 border-indigo-100 p-10 rounded-2xl flex flex-col md:flex-row gap-10 items-center">
-                <div className="max-w-md">
-                    <div className="flex items-center gap-3 mb-4">
-                        <Landmark className="text-indigo-600" size={32}/>
-                        <h4 className="text-2xl font-black text-indigo-900 uppercase tracking-tight">Master Importer</h4>
-                    </div>
-                    <p className="text-sm text-indigo-700/70 font-medium mb-6">Import legacy financial data directly into the ERP. The system strictly processes 6 columns and auto-categorizes expenses/income.</p>
-                    <div className="bg-white p-4 rounded-xl border border-indigo-200 space-y-3">
-                        <h5 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Required Column Mapping (6):</h5>
-                        <ol className="text-[11px] font-mono text-slate-600 space-y-1">
-                            <li className="flex justify-between"><span>1. Date</span> <span className="text-[9px] bg-slate-100 px-1 rounded uppercase">YYYY-MM-DD</span></li>
-                            <li className="flex justify-between"><span>2. Account Name</span> <span className="text-[9px] bg-slate-100 px-1 rounded uppercase">Category</span></li>
-                            <li className="flex justify-between"><span>3. Account Type</span> <span className="text-[9px] bg-slate-100 px-1 rounded uppercase">Optional</span></li>
-                            <li className="flex justify-between"><span>4. Debit Amount</span> <span className="text-[9px] bg-red-100 text-red-700 px-1 rounded uppercase">Expenses</span></li>
-                            <li className="flex justify-between"><span>5. Credit Amount</span> <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded uppercase">Income</span></li>
-                            <li className="flex justify-between"><span>6. Description</span> <span className="text-[9px] bg-slate-100 px-1 rounded uppercase">Note</span></li>
-                        </ol>
-                    </div>
-                </div>
-                
-                <div className="flex-1 w-full flex flex-col items-center">
-                    <label className="w-full h-64 flex flex-col items-center justify-center border-4 border-dashed border-indigo-200 rounded-[32px] hover:border-indigo-500 hover:bg-white cursor-pointer transition-all bg-indigo-100/50 group">
-                        {importLoading ? <Loader2 className="animate-spin text-indigo-600" size={40} /> : <Upload className="text-indigo-400 group-hover:text-indigo-600 mb-4" size={48}/>}
-                        <span className="text-lg font-black text-indigo-800 uppercase tracking-tight">Drop Ledger CSV Here</span>
-                        <p className="text-xs text-indigo-500 font-bold mt-2 uppercase tracking-widest">Only .CSV Files accepted</p>
-                        <input type="file" accept=".csv" disabled={importLoading} className="hidden" onChange={handleMasterImport} />
-                    </label>
-                </div>
-            </div>
-
-            <div className="bg-white p-8 rounded-2xl border-2 border-slate-100 shadow-sm">
-                <h4 className="font-black text-slate-800 uppercase text-xs mb-6 flex items-center gap-2 tracking-widest"><Sparkles size={16} className="text-amber-500"/> Advanced Data Analysis (AI)</h4>
-                <div className="space-y-6">
-                    <p className="text-sm text-slate-600 font-medium italic">Unsure of your data format? Paste a few rows here and the Gemini AI will generate a specific SQL mapping for you.</p>
-                    <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Paste raw spreadsheet rows here..." className="w-full h-40 p-5 bg-slate-50 border-2 border-slate-100 rounded-xl font-mono text-xs text-slate-800 outline-none focus:bg-white focus:border-amber-500 transition-all" />
-                    <div className="flex justify-end">
-                        <button onClick={() => {
-                            if (!inputText.trim()) return;
-                            setLoading(true);
-                            analyzeDataStructure(inputText).then(res => { setResult(res); setLoading(false); }).catch(() => setLoading(false));
-                        }} disabled={loading} className="px-10 py-4 bg-slate-950 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-black flex items-center gap-3 transition-transform active:scale-95">
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : <Database size={16} />} Analyze Legacy Data
-                        </button>
-                    </div>
-                </div>
-            </div>
-            {result && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fade-in">
-                    <div className="bg-slate-900 p-8 rounded-3xl border-4 border-slate-800 shadow-2xl overflow-hidden">
-                        <div className="flex justify-between items-center mb-6">
-                            <h5 className="text-amber-500 font-black text-[11px] uppercase tracking-[0.2em]">Proposed SQL Schema</h5>
-                            <button onClick={() => {navigator.clipboard.writeText(result.proposedSchema); alert('Copied!');}} className="text-white hover:text-amber-500"><Copy size={16}/></button>
-                        </div>
-                        <pre className="text-[11px] font-mono text-slate-300 whitespace-pre-wrap overflow-y-auto max-h-64 custom-scrollbar leading-relaxed">{result.proposedSchema}</pre>
-                    </div>
-                    <div className="bg-white p-8 rounded-3xl border-4 border-slate-100 shadow-xl overflow-hidden flex flex-col">
-                         <h5 className="text-slate-900 font-black text-[11px] uppercase tracking-[0.2em] mb-6 border-b-2 border-slate-50 pb-2">Step-by-Step Migration Plan</h5>
-                         <div className="text-[12px] text-slate-600 whitespace-pre-wrap overflow-y-auto font-medium leading-relaxed">{result.migrationPlan}</div>
-                    </div>
-                </div>
-            )}
-        </div>
-      )}
-
-      {activeTab === 'PROFILE' && (
-        <div className="bg-white p-10 rounded-2xl border-2 border-slate-100 shadow-lg max-w-3xl mx-auto">
-            <div className="flex items-center gap-4 mb-10 border-b-2 border-slate-50 pb-6">
-                <div className="p-4 bg-red-100 text-red-600 rounded-2xl"><Lock size={32}/></div>
-                <div>
-                    <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Security Credentials</h3>
-                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">System Access Keys</p>
-                </div>
-            </div>
-            <form onSubmit={(e) => { e.preventDefault(); updatePassword('SUPER_ADMIN', passSuper); updatePassword('STAFF', passStaff); alert('Security records updated!'); }} className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-400 uppercase tracking-widest">Master Administrator Key</label>
-                        <input type="password" value={passSuper} onChange={e => setPassSuper(e.target.value)} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-lg font-black text-slate-800 outline-none focus:border-red-500" placeholder="••••••••" />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-slate-400 uppercase tracking-widest">Staff Portal Key</label>
-                        <input type="password" value={passStaff} onChange={e => setPassStaff(e.target.value)} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-lg font-black text-slate-800 outline-none focus:border-red-500" placeholder="••••••••" />
-                    </div>
-                </div>
-                <button type="submit" className="w-full py-5 bg-red-600 text-white rounded-2xl text-xs font-black uppercase tracking-[0.2em] hover:bg-red-700 shadow-2xl transition-all active:scale-[0.98]">Authorize Protocol Update</button>
-            </form>
-        </div>
-      )}
-
-      {activeTab === 'BACKUP' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-            <div className="bg-white p-10 rounded-[32px] border-2 border-slate-100 shadow-lg text-center hover:shadow-2xl transition-all group">
-                <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center mb-8 mx-auto group-hover:scale-110 transition-transform"><FileJson size={40} /></div>
-                <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-3">Snapshot Export</h4>
-                <p className="text-sm text-slate-500 font-medium mb-8">Download your entire ERP local database as an encrypted JSON snapshot for offline storage.</p>
-                <button onClick={handleFullSystemBackup} className="w-full py-4 bg-slate-950 text-white rounded-2xl font-black uppercase text-xs tracking-[0.2em] hover:bg-black shadow-xl">Execute Export</button>
-            </div>
-            <div className="bg-white p-10 rounded-[32px] border-2 border-slate-100 shadow-lg text-center hover:shadow-2xl transition-all group">
-                <div className="w-20 h-20 bg-red-50 text-red-600 rounded-3xl flex items-center justify-center mb-8 mx-auto group-hover:scale-110 transition-transform"><RefreshCcw size={40} /></div>
-                <h4 className="text-2xl font-black text-slate-900 uppercase tracking-tight mb-3">Kernel Restore</h4>
-                <p className="text-sm text-slate-500 font-medium mb-8">Overwrite the current system state by uploading a previous JSON snapshot. Use with extreme caution.</p>
-                <label className="w-full">
-                    <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
-                    <div className="w-full py-4 bg-white border-4 border-slate-950 text-slate-950 rounded-2xl font-black uppercase text-xs tracking-[0.2em] text-center cursor-pointer hover:bg-slate-50 transition-all">Begin Recovery</div>
-                </label>
-            </div>
-        </div>
-      )}
-    </div>
+    <ERPContext.Provider value={{
+      currentUserRole, isAuthenticated, login, logout, updatePassword, logoUrl, 
+      updateLogo: (u) => { setLogoUrl(u); localStorage.setItem('erp_logo', u); },
+      customers, jobs, inventory, staff, services, transactions, accounts, purchases, leads, appointments, stockLogs, payrollHistory,
+      isCloudConnected, syncStatus, lastSyncError: null, connectToCloud, syncAllLocalToCloud: async () => {},
+      addJob, updateJob, deleteJob, updateJobStatus, addStaff, removeStaff, updateStaff, addInventoryItem, deleteInventoryItem, recordStockUsage, bulkAddInventory,
+      addService, updateService, deleteService, bulkAddServices, restoreData, resetToFactory, 
+      addCustomer: (c) => { const u = [...customers, c]; setCustomers(u); persist('erp_customers', u); },
+      updateCustomer: (c) => { const u = customers.map(x => x.id === c.id ? c : x); setCustomers(u); persist('erp_customers', u); },
+      addPurchase: (p) => { const u = [...purchases, p]; setPurchases(u); persist('erp_purchases', u); }, 
+      addTransaction, bulkAddTransactions, bulkProcessJournal, bulkAddPurchases: (p) => {}, executePayroll
+    }}>
+      {children}
+    </ERPContext.Provider>
   );
+};
+
+export const useERP = () => {
+  const context = useContext(ERPContext);
+  if (context === undefined) throw new Error('useERP must be used within an ERPProvider');
+  return context;
 };
