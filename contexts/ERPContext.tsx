@@ -141,6 +141,15 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Re-connect on Boot if credentials exist
+  useEffect(() => {
+      const savedUrl = localStorage.getItem('erp_cloud_url');
+      const savedKey = localStorage.getItem('erp_cloud_key');
+      if (savedUrl && savedKey) {
+          connectToCloud(savedUrl, savedKey);
+      }
+  }, []);
+
   const cloudUpsert = async (table: string, data: any[]) => {
     if (!supabase) return;
     try {
@@ -172,7 +181,6 @@ export const ERPProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Auto-sync whenever local data changes (Debounced potentially in future)
   useEffect(() => {
     if (isCloudConnected) {
        const timer = setTimeout(() => syncAllLocalToCloud(), 2000);
