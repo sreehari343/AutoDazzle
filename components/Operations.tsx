@@ -1,12 +1,10 @@
-
 import React, { useState } from 'react';
 import { useERP } from '../contexts/ERPContext.tsx';
-// Added missing RefreshCcw icon import
-import { X, Plus, Upload, Trash2, Edit, Search, FileSpreadsheet, Copy, Car, Table, Info, RefreshCcw } from 'lucide-react';
-import { Service } from '../types.ts';
+import { X, Plus, Trash2, Edit, Search, FileSpreadsheet, Upload, Info, Car } from 'lucide-react';
+import { Service, VehicleSegment } from '../types.ts';
 
 export const Operations: React.FC = () => {
-  const { services, addService, updateService, deleteService, bulkAddServices, currentUserRole, isCloudConnected, syncStatus } = useERP();
+  const { services, addService, updateService, deleteService, bulkAddServices, currentUserRole } = useERP();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -17,7 +15,7 @@ export const Operations: React.FC = () => {
 
   const initialFormState = {
     sku: '', name: '', category: 'WASHING' as Service['category'], duration: 30,
-    price_HATCH: 0, price_SEDAN: 0, price_SUV: 0, price_LUX: 0
+    price_HATCHBACK: 0, price_SEDAN: 0, price_SUV_MUV: 0, price_LUXURY: 0
   };
 
   const [formData, setFormData] = useState(initialFormState);
@@ -32,37 +30,42 @@ export const Operations: React.FC = () => {
     setEditingId(null); setFormData(initialFormState); setIsModalOpen(true);
   };
 
-  const handleOpenEdit = (s: Service) => {
+  const handleOpenEdit = (service: Service) => {
     if (!canEdit) return;
-    setEditingId(s.id);
+    setEditingId(service.id);
     setFormData({
-      sku: s.sku, name: s.name, category: s.category, duration: s.durationMinutes,
-      price_HATCH: s.prices.HATCHBACK || 0,
-      price_SEDAN: s.prices.SEDAN || 0,
-      price_SUV: s.prices.SUV_MUV || 0,
-      price_LUX: s.prices.LUXURY || 0
+      sku: service.sku, name: service.name, category: service.category, duration: service.durationMinutes,
+      price_HATCHBACK: service.prices.HATCHBACK || 0,
+      price_SEDAN: service.prices.SEDAN || 0,
+      price_SUV_MUV: service.prices.SUV_MUV || 0,
+      price_LUXURY: service.prices.LUXURY || 0,
     });
     setIsModalOpen(true);
   };
 
+  const handleDelete = (id: string) => {
+    if (!canEdit) return;
+    if (window.confirm("Delete this service permanently?")) deleteService(id);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const payload: Service = {
+    const servicePayload: Service = {
       id: editingId || `s-${Date.now()}`,
       sku: formData.sku || `SVC-${services.length + 1}`,
       name: formData.name,
-      basePrice: formData.price_HATCH,
+      basePrice: formData.price_HATCHBACK, 
       prices: {
-        HATCHBACK: formData.price_HATCH,
-        SEDAN: formData.price_SEDAN,
-        SUV_MUV: formData.price_SUV,
-        LUXURY: formData.price_LUX,
+        HATCHBACK: formData.price_HATCHBACK, 
+        SEDAN: formData.price_SEDAN, 
+        SUV_MUV: formData.price_SUV_MUV, 
+        LUXURY: formData.price_LUXURY,
         AUTORICKSHAW: 0, AUTOTAXI: 0, BIKE: 0, SCOOTY: 0, BULLET: 0, PICKUP_SMALL: 0, PICKUP_LARGE: 0
       },
-      durationMinutes: formData.duration,
+      durationMinutes: formData.duration, 
       category: formData.category
     };
-    editingId ? updateService(payload) : addService(payload);
+    editingId ? updateService(servicePayload) : addService(servicePayload);
     setIsModalOpen(false);
   };
 
@@ -70,12 +73,12 @@ export const Operations: React.FC = () => {
     const lines = importText.split('\n').filter(l => l.trim());
     const imported: Service[] = lines.map((line, idx) => {
       const p = line.split(',').map(s => s.trim());
-      // STRICT 5 COL SEQUENCE: Name, Hatch, Sedan, SUV, Premium
+      // SEQUENCE (5 COLS): Name, Hatch, Sedan, SUV, Premium
       return {
           id: `si-${Date.now()}-${idx}`,
           sku: `SVC-${1000 + idx + services.length}`,
           name: p[0],
-          category: 'WASHING',
+          category: 'WASHING', 
           basePrice: parseFloat(p[1]) || 0,
           durationMinutes: 30,
           prices: {
@@ -90,85 +93,59 @@ export const Operations: React.FC = () => {
     bulkAddServices(imported);
     setIsImportOpen(false);
     setImportText('');
-    alert(`Successfully imported ${imported.length} services. Auto-syncing to cloud...`);
+    alert(`Imported ${imported.length} services.`);
   };
-
-  const PricingInput = ({ label, field }: { label: string, field: keyof typeof formData }) => (
-    <div className="space-y-1">
-        <label className="text-[11px] font-black text-slate-800 uppercase block tracking-widest">{label} (₹)</label>
-        <input 
-            type="number" 
-            value={formData[field] || ''} 
-            onChange={e => setFormData({...formData, [field]: parseFloat(e.target.value) || 0})} 
-            className="w-full p-4 border-2 border-slate-300 rounded-xl text-xl font-black text-black bg-white focus:border-black outline-none transition-all shadow-sm focus:ring-4 focus:ring-slate-50" 
-            placeholder="0"
-        />
-    </div>
-  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-slate-200 gap-4">
-        <div className="flex items-center gap-4">
-          <div>
-            <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Service Catalog</h2>
-            <div className="flex items-center gap-2">
-                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Master Pricing Menu</p>
-                {isCloudConnected && (
-                    <span className="flex items-center gap-1 text-[9px] font-black text-emerald-600 uppercase">
-                        <RefreshCcw size={10} className={syncStatus === 'SYNCING' ? 'animate-spin' : ''}/> 
-                        {syncStatus === 'SYNCING' ? 'Syncing...' : 'Cloud Ready'}
-                    </span>
-                )}
-            </div>
-          </div>
+        <div>
+          <h2 className="text-xl font-bold text-slate-800 uppercase tracking-tight">Service Catalog</h2>
+          <p className="text-xs text-slate-500 font-medium">Pricing & Segment Menu</p>
         </div>
         <div className="relative flex-1 max-w-sm">
              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
-             <input type="text" placeholder="Search services..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-xl text-sm font-bold text-black focus:border-red-600 outline-none transition-all" />
+             <input type="text" placeholder="Search service name..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-md text-sm bg-white text-black font-medium" />
         </div>
         <div className="flex gap-2">
           {canEdit && (
              <>
-                <button onClick={() => setIsImportOpen(true)} className="bg-white border-2 border-slate-200 text-slate-800 px-5 py-2.5 rounded-xl text-[10px] font-black shadow-sm flex items-center uppercase hover:bg-slate-50 transition-all active:scale-95"><Upload size={14} className="mr-2" /> Batch Load</button>
-                <button onClick={handleOpenAdd} className="bg-red-600 text-white px-6 py-2.5 rounded-xl text-[10px] font-black shadow-lg flex items-center uppercase hover:bg-red-700 transition-all tracking-wider active:scale-95"><Plus size={16} className="mr-2" /> Add Package</button>
+                <button onClick={() => setIsImportOpen(true)} className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-md text-xs font-bold uppercase flex items-center hover:bg-slate-50 transition-all"><Upload size={14} className="mr-2" /> Bulk Import</button>
+                <button onClick={handleOpenAdd} className="bg-red-600 text-white px-5 py-2 rounded-md text-xs font-bold uppercase flex items-center hover:bg-red-700 transition-all shadow-md"><Plus size={16} className="mr-2" /> New Package</button>
              </>
           )}
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-xl border-4 border-slate-50 overflow-hidden">
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left whitespace-nowrap">
-            <thead className="bg-slate-950 text-white font-black text-[11px] uppercase tracking-[0.2em]">
+            <thead className="bg-slate-900 text-white border-b border-slate-800">
               <tr>
-                <th className="px-8 py-5">Service Information</th>
-                <th className="px-4 py-5 text-right bg-blue-900/40">Hatchback</th>
-                <th className="px-4 py-5 text-right bg-blue-900/40">Sedan</th>
-                <th className="px-4 py-5 text-right bg-blue-900/40">SUV / MUV</th>
-                <th className="px-4 py-5 text-right bg-red-900/40 border-l border-white/10">Premium</th>
-                {canEdit && <th className="px-8 py-5 text-center">Manage</th>}
+                <th className="px-6 py-4 font-black uppercase text-[10px] tracking-widest">Service Details</th>
+                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Hatchback</th>
+                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">Sedan</th>
+                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-blue-900/50">SUV / MUV</th>
+                <th className="px-3 py-4 font-black uppercase text-[10px] tracking-widest text-right bg-red-900/50">Premium</th>
+                {canEdit && <th className="px-6 py-4 font-black uppercase text-[10px] tracking-widest text-center">Manage</th>}
               </tr>
             </thead>
-            <tbody className="divide-y-2 divide-slate-50">
+            <tbody className="divide-y divide-slate-100">
               {filteredServices.map((s) => (
-                <tr key={s.id} className="hover:bg-blue-50/20 group transition-colors">
-                  <td className="px-8 py-5">
-                    <div className="font-black text-slate-900 text-lg uppercase leading-none">{s.name}</div>
-                    <div className="text-[10px] text-slate-400 font-mono mt-1.5 flex items-center gap-2">
-                        <span className="bg-slate-100 px-1 rounded">{s.sku}</span>
-                        <span className="uppercase tracking-widest">{s.category}</span>
-                    </div>
+                <tr key={s.id} className="hover:bg-slate-50 group transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="font-bold text-slate-900 text-sm uppercase">{s.name}</div>
+                    <div className="text-[10px] text-slate-400 font-mono uppercase mt-0.5">{s.sku}</div>
                   </td>
-                  <td className="px-4 py-5 text-right font-black text-slate-700 text-base">₹{s.prices.HATCHBACK?.toLocaleString()}</td>
-                  <td className="px-4 py-5 text-right font-black text-slate-700 text-base">₹{s.prices.SEDAN?.toLocaleString()}</td>
-                  <td className="px-4 py-5 text-right font-black text-slate-700 text-base">₹{s.prices.SUV_MUV?.toLocaleString()}</td>
-                  <td className="px-4 py-5 text-right font-black text-red-600 text-xl border-l-2 border-slate-50">₹{s.prices.LUXURY?.toLocaleString()}</td>
+                  <td className="px-3 py-4 text-right bg-blue-50/20 font-bold text-slate-800">₹{s.prices.HATCHBACK || 0}</td>
+                  <td className="px-3 py-4 text-right bg-blue-50/20 font-bold text-slate-800">₹{s.prices.SEDAN || 0}</td>
+                  <td className="px-3 py-4 text-right bg-blue-50/20 font-bold text-slate-800">₹{s.prices.SUV_MUV || 0}</td>
+                  <td className="px-3 py-4 text-right bg-red-50/30 font-black text-red-700">₹{s.prices.LUXURY || 0}</td>
                   {canEdit && (
-                      <td className="px-8 py-5">
-                          <div className="flex justify-center gap-3">
-                            <button onClick={() => handleOpenEdit(s)} className="p-3 text-blue-600 bg-blue-50 border-2 border-blue-100 rounded-xl hover:bg-blue-600 hover:text-white transition-all active:scale-90"><Edit size={16}/></button>
-                            <button onClick={() => {if(confirm("Permanently delete this service?")) deleteService(s.id)}} className="p-3 text-red-600 bg-red-50 border-2 border-red-100 rounded-xl hover:bg-red-600 hover:text-white transition-all active:scale-90"><Trash2 size={16}/></button>
+                      <td className="px-6 py-4">
+                          <div className="flex justify-center gap-2">
+                            <button onClick={() => handleOpenEdit(s)} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-all"><Edit size={16}/></button>
+                            <button onClick={() => handleDelete(s.id)} className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all"><Trash2 size={16}/></button>
                           </div>
                       </td>
                   )}
@@ -179,56 +156,62 @@ export const Operations: React.FC = () => {
         </div>
       </div>
       
-      {/* ENTERPRISE EDIT MODAL - EXTREME VISIBILITY */}
+      {/* ADD/EDIT MODAL - CLEANED FOR VISIBILITY */}
       {isModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/95 z-[9999] flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden text-black border-[12px] border-slate-950 animate-fade-in-up">
-                  <div className="p-10 border-b-8 border-slate-50 flex justify-between items-center bg-white">
-                      <div>
-                          <h3 className="text-4xl font-black text-black uppercase tracking-tighter">{editingId ? 'Edit Service Details' : 'New System Service'}</h3>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em] mt-3">Enterprise Pricing Logic v2.4</p>
-                      </div>
-                      <button onClick={() => setIsModalOpen(false)} className="p-5 bg-slate-100 rounded-3xl border-4 border-slate-950 hover:bg-red-600 hover:text-white transition-all active:scale-90"><X size={32}/></button>
+          <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-xl rounded-xl shadow-2xl overflow-hidden text-black animate-fade-in-up">
+                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                      <h3 className="text-lg font-bold text-slate-800 uppercase tracking-tight">{editingId ? 'Edit Package Edition' : 'Create New Package'}</h3>
+                      <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-red-500"><X size={24}/></button>
                   </div>
-                  <form onSubmit={handleSubmit} className="p-10 space-y-10 bg-white">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                          <div className="space-y-2">
-                              <label className="text-[11px] font-black text-black uppercase block tracking-[0.2em]">Service Display Name</label>
+                  <form onSubmit={handleSubmit} className="p-8 space-y-6 bg-white">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase block tracking-wider">Package Name</label>
                               <input 
                                 required 
                                 value={formData.name} 
                                 onChange={e => setFormData({...formData, name: e.target.value})} 
-                                className="w-full p-5 border-4 border-slate-100 rounded-2xl text-xl font-black text-black bg-slate-50 focus:bg-white focus:border-black outline-none shadow-inner transition-all" 
-                                placeholder="Foam Wash Deluxe"
+                                className="w-full p-2.5 border-2 border-slate-200 rounded-md text-sm font-bold text-slate-900 bg-white focus:border-red-600 outline-none" 
                               />
                           </div>
-                          <div className="space-y-2">
-                              <label className="text-[11px] font-black text-black uppercase block tracking-[0.2em]">System SKU / Code</label>
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-slate-500 uppercase block tracking-wider">SKU / Code</label>
                               <input 
-                                placeholder="AUTO-GENERATE" 
+                                placeholder="AUTO-GEN" 
                                 value={formData.sku} 
                                 onChange={e => setFormData({...formData, sku: e.target.value})} 
-                                className="w-full p-5 border-4 border-slate-100 rounded-2xl text-xl font-mono font-black text-slate-400 bg-slate-50 outline-none" 
+                                className="w-full p-2.5 border-2 border-slate-200 rounded-md text-sm font-mono font-bold text-slate-600 bg-slate-50" 
                               />
                           </div>
                       </div>
 
-                      <div className="bg-slate-50 p-8 rounded-[48px] border-4 border-slate-100 space-y-8">
-                          <h4 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.4em] flex items-center gap-3 border-b-4 border-slate-200 pb-4">
-                             <Car size={20} className="text-red-600"/> Multi-Tier Pricing Matrix (INR)
-                          </h4>
-                          <div className="grid grid-cols-2 gap-10">
-                              <PricingInput label="Hatchback" field="price_HATCH" />
-                              <PricingInput label="Sedan" field="price_SEDAN" />
-                              <PricingInput label="SUV / MUV" field="price_SUV" />
-                              <PricingInput label="Premium / Luxury" field="price_LUX" />
+                      <div className="bg-slate-50 p-6 rounded-lg border-2 border-slate-100 grid grid-cols-2 gap-4">
+                          <div className="col-span-2 mb-2">
+                             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Car size={10}/> Vehicle Pricing (INR)</h4>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block">Hatchback</label>
+                            <input type="number" value={formData.price_HATCHBACK} onChange={e => setFormData({...formData, price_HATCHBACK: parseFloat(e.target.value) || 0})} className="w-full p-2 border border-slate-300 rounded text-sm font-bold bg-white text-black"/>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block">Sedan</label>
+                            <input type="number" value={formData.price_SEDAN} onChange={e => setFormData({...formData, price_SEDAN: parseFloat(e.target.value) || 0})} className="w-full p-2 border border-slate-300 rounded text-sm font-bold bg-white text-black"/>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block">SUV / MUV</label>
+                            <input type="number" value={formData.price_SUV_MUV} onChange={e => setFormData({...formData, price_SUV_MUV: parseFloat(e.target.value) || 0})} className="w-full p-2 border border-slate-300 rounded text-sm font-bold bg-white text-black"/>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block">Premium</label>
+                            <input type="number" value={formData.price_LUXURY} onChange={e => setFormData({...formData, price_LUXURY: parseFloat(e.target.value) || 0})} className="w-full p-2 border border-slate-300 rounded text-sm font-bold bg-white text-black"/>
                           </div>
                       </div>
 
-                      <div className="flex gap-6">
-                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-5 border-4 border-slate-200 rounded-[20px] text-xs font-black uppercase text-slate-400 hover:bg-slate-50 transition-all active:scale-95">Discard</button>
-                          <button type="submit" className="flex-[2] py-5 bg-black text-white rounded-[20px] text-lg font-black uppercase shadow-2xl hover:bg-red-700 transition-all tracking-[0.1em] border-b-8 border-black/40 active:scale-95">
-                              {editingId ? 'Push Updates' : 'Create Package'}
+                      <div className="flex gap-4">
+                          <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 border-2 border-slate-200 rounded-lg text-xs font-bold uppercase text-slate-500">Cancel</button>
+                          <button type="submit" className="flex-[2] py-3 bg-red-600 text-white rounded-lg text-xs font-bold uppercase shadow-lg hover:bg-red-700 transition-all">
+                              {editingId ? 'Confirm Update' : 'Finalize Package'}
                           </button>
                       </div>
                   </form>
@@ -236,39 +219,36 @@ export const Operations: React.FC = () => {
           </div>
       )}
 
-      {/* SERVICE BULK IMPORT MODAL */}
+      {/* BULK IMPORT MODAL */}
       {isImportOpen && canEdit && (
-          <div className="fixed inset-0 bg-indigo-950/90 z-[9999] flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl text-black border-[12px] border-indigo-900 animate-fade-in-up overflow-hidden">
-                  <div className="p-10 border-b-8 border-slate-50 flex justify-between items-center bg-white">
-                      <div>
-                          <h3 className="text-3xl font-black text-indigo-900 uppercase tracking-tighter flex items-center gap-3"><FileSpreadsheet size={32}/> Service Bulk Loader</h3>
-                          <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mt-2">Automated Multi-Rate Upload</p>
-                      </div>
-                      <button onClick={() => setIsImportOpen(false)} className="p-4 bg-indigo-50 rounded-2xl text-indigo-600 hover:bg-red-600 hover:text-white transition-all active:scale-90"><X size={24}/></button>
+          <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-xl rounded-xl shadow-2xl text-slate-900 animate-fade-in-up">
+                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                      <h3 className="text-lg font-black text-indigo-900 uppercase flex items-center gap-2"><FileSpreadsheet size={18}/> Service Batch Uploader</h3>
+                      <button onClick={() => setIsImportOpen(false)} className="text-slate-500 hover:text-red-500 transition-all"><X size={24}/></button>
                   </div>
-                  <div className="p-10">
-                      <div className="p-6 rounded-[28px] mb-8 border-4 border-indigo-100 bg-indigo-50/50">
-                          <div className="flex justify-between items-start mb-4">
-                              <h4 className="text-[11px] font-black uppercase text-indigo-800 flex items-center gap-2"><Info size={14}/> STRICT 5 COLUMN SEQUENCE</h4>
+                  <div className="p-8">
+                      <div className="p-4 rounded-lg mb-6 border-2 border-indigo-100 bg-indigo-50/50">
+                          <div className="flex justify-between items-start mb-2">
+                              <h4 className="text-[10px] font-black uppercase text-indigo-800 flex items-center gap-1"><Info size={10}/> STRICT 5 COLUMN SEQUENCE</h4>
                               <button onClick={() => {
-                                  navigator.clipboard.writeText("Ceramic Wash, 450, 600, 800, 1200\nWax Polish, 1200, 1500, 1800, 3000");
-                                  alert("Example logic copied to clipboard!");
-                              }} className="text-[10px] bg-white border-2 border-indigo-200 px-4 py-1.5 rounded-full font-black uppercase hover:bg-white transition-all shadow-md active:scale-95">Copy Sample CSV</button>
+                                  navigator.clipboard.writeText("Foam Wash, 350, 450, 600, 1000\nFull Polish, 1200, 1500, 1800, 3000");
+                                  alert("Example Copied!");
+                              }} className="text-[9px] bg-white border border-indigo-200 px-3 py-1 rounded font-black hover:bg-white transition-all">Copy Sample</button>
                           </div>
-                          <code className="block bg-white p-4 rounded-2xl text-[12px] font-mono font-bold text-indigo-900 border-2 border-indigo-100 shadow-inner">
-                             Service Name, Hatchback Rate, Sedan Rate, SUV Rate, Premium Rate
+                          <code className="block bg-white p-3 rounded-md text-[10px] font-mono text-slate-700 border border-indigo-200 shadow-inner">
+                             Name, Hatchback Rate, Sedan Rate, SUV Rate, Premium Rate
                           </code>
                       </div>
                       <textarea 
-                        className="w-full h-48 p-6 border-4 border-slate-100 rounded-3xl font-mono text-sm focus:border-indigo-600 outline-none text-slate-900 bg-slate-50 shadow-inner" 
-                        placeholder="Foam Wash Premium, 300, 400, 500, 800" 
+                        className="w-full h-48 p-4 border-2 border-slate-200 rounded-lg font-mono text-xs focus:border-indigo-600 outline-none text-slate-900 bg-white shadow-inner" 
+                        placeholder="Service Name, 300, 400, 500, 800" 
                         value={importText} 
                         onChange={e => setImportText(e.target.value)} 
                       />
-                      <div className="mt-8 flex gap-6">
-                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-5 border-4 border-slate-200 rounded-[20px] text-xs font-black uppercase text-slate-400">Cancel</button>
-                          <button onClick={handleBulkImport} className="flex-[2] py-5 bg-indigo-600 text-white rounded-[20px] text-lg font-black uppercase shadow-2xl hover:bg-indigo-700 transition-all tracking-wider border-b-8 border-indigo-900/30 active:scale-95">Start Protocol</button>
+                      <div className="mt-6 flex gap-4">
+                          <button onClick={() => setIsImportOpen(false)} className="flex-1 py-3 border-2 border-slate-200 rounded-lg text-xs font-bold uppercase text-slate-500">Cancel</button>
+                          <button onClick={handleBulkImport} className="flex-[2] py-3 bg-indigo-600 text-white rounded-lg text-xs font-bold uppercase shadow-lg hover:bg-indigo-700 transition-all">Begin Import</button>
                       </div>
                   </div>
               </div>
