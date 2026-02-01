@@ -61,9 +61,11 @@ export const MigrationAssistant: React.FC = () => {
     e.target.value = ''; 
   };
 
-  const cleanNum = (val: string) => {
-      if (!val || val.trim() === '-' || val.trim() === '') return 0;
-      const cleaned = val.replace(/[^0-9.-]+/g, '');
+  const cleanNum = (val: any) => {
+      if (val === undefined || val === null) return 0;
+      const str = String(val).trim();
+      if (!str || str === '-' || str === '#ERROR!') return 0;
+      const cleaned = str.replace(/[^0-9.-]+/g, '');
       return parseFloat(cleaned) || 0;
   };
 
@@ -74,55 +76,68 @@ export const MigrationAssistant: React.FC = () => {
 
       const reader = new FileReader();
       reader.onload = async (event) => {
-          const text = event.target?.result as string;
-          const rows = text.split('\n').filter(r => r.trim()).map(row => {
-              const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-              return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
-          });
+          try {
+              const text = event.target?.result as string;
+              const rows = text.split('\n').filter(r => r.trim()).map(row => {
+                  const matches = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+                  return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : row.split(',').map(c => c.trim());
+              });
 
-          // Filter header row (usually contains words like "Date" or "Account")
-          const dataRows = (rows[0][0]?.toLowerCase().includes('date') || rows[0][1]?.toLowerCase().includes('acc')) ? rows.slice(1) : rows;
-          
-          const newTxs: Transaction[] = [];
-          dataRows.forEach((row, idx) => {
-              // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
-              if (row.length < 5) return;
-
-              const date = row[0] || new Date().toISOString().split('T')[0];
-              const accName = row[1] || 'Imported Account';
-              const debit = cleanNum(row[3]);
-              const credit = cleanNum(row[4]);
-              const desc = row[5] || accName;
-
-              if (debit > 0) {
-                  newTxs.push({ 
-                      id: `imp-dr-${Date.now()}-${idx}`, 
-                      date, 
-                      type: 'EXPENSE', 
-                      category: accName, 
-                      amount: debit, 
-                      description: desc, 
-                      method: 'TRANSFER' 
-                  });
+              if (rows.length === 0) {
+                  alert("File is empty.");
+                  setImportLoading(false);
+                  return;
               }
-              if (credit > 0) {
-                  newTxs.push({ 
-                      id: `imp-cr-${Date.now()}-${idx}`, 
-                      date, 
-                      type: 'INCOME', 
-                      category: accName, 
-                      amount: credit, 
-                      description: desc, 
-                      method: 'TRANSFER' 
-                  });
-              }
-          });
 
-          if (newTxs.length > 0 && window.confirm(`Import ${newTxs.length} financial entries?`)) {
-              bulkAddTransactions(newTxs);
-              alert(`Successfully imported ${newTxs.length} records.`);
-          } else if (newTxs.length === 0) {
-              alert("No valid data found in those 6 columns.");
+              // Filter header row
+              const firstRow = rows[0];
+              const isHeader = firstRow && (String(firstRow[0]).toLowerCase().includes('date') || String(firstRow[1]).toLowerCase().includes('acc'));
+              const dataRows = isHeader ? rows.slice(1) : rows;
+              
+              const newTxs: Transaction[] = [];
+              dataRows.forEach((row, idx) => {
+                  // STRICT 6 COLS: [0]Date, [1]Acc Name, [2]Acc Type, [3]Debit, [4]Credit, [5]Description
+                  if (!row || row.length < 4) return;
+
+                  const date = row[0] || new Date().toISOString().split('T')[0];
+                  const accName = row[1] || 'Imported Entry';
+                  const debit = cleanNum(row[3]);
+                  const credit = cleanNum(row[4]);
+                  const desc = row[5] || accName;
+
+                  if (debit > 0) {
+                      newTxs.push({ 
+                          id: `imp-dr-${Date.now()}-${idx}`, 
+                          date, 
+                          type: 'EXPENSE', 
+                          category: accName, 
+                          amount: debit, 
+                          description: desc, 
+                          method: 'TRANSFER' 
+                      });
+                  }
+                  if (credit > 0) {
+                      newTxs.push({ 
+                          id: `imp-cr-${Date.now()}-${idx}`, 
+                          date, 
+                          type: 'INCOME', 
+                          category: accName, 
+                          amount: credit, 
+                          description: desc, 
+                          method: 'TRANSFER' 
+                      });
+                  }
+              });
+
+              if (newTxs.length > 0 && window.confirm(`Import ${newTxs.length} financial entries?`)) {
+                  bulkAddTransactions(newTxs);
+                  alert(`Successfully imported ${newTxs.length} records into the ledger.`);
+              } else if (newTxs.length === 0) {
+                  alert("No valid data found. Ensure 6 columns: Date, Acc Name, Acc Type, Debit, Credit, Description.");
+              }
+          } catch (err) {
+              console.error(err);
+              alert("Error processing file. Please ensure it is a valid CSV.");
           }
           setImportLoading(false);
           e.target.value = '';
@@ -182,18 +197,6 @@ export const MigrationAssistant: React.FC = () => {
                     </div>
                 </div>
             </div>
-            {result && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
-                    <div className="bg-slate-900 p-6 rounded-lg border border-slate-800 shadow-xl overflow-hidden">
-                        <h5 className="text-amber-500 font-black text-[10px] uppercase mb-4 tracking-widest">Proposed Schema</h5>
-                        <pre className="text-[10px] font-mono text-slate-300 whitespace-pre-wrap overflow-y-auto max-h-60">{result.proposedSchema}</pre>
-                    </div>
-                    <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-                         <h5 className="text-slate-800 font-black text-[10px] uppercase mb-4 tracking-widest">Migration Steps</h5>
-                         <div className="text-xs text-slate-600 whitespace-pre-wrap overflow-y-auto">{result.migrationPlan}</div>
-                    </div>
-                </div>
-            )}
         </div>
       )}
 
